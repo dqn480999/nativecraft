@@ -8,6 +8,7 @@
 #include "core/Math.hpp"
 #include "render/Environment.hpp"
 #include "render/GL.hpp"
+#include "render/PlayerRenderer.hpp"
 #include "render/Shader.hpp"
 #include "render/TextureArray.hpp"
 #include "world/Blocks.hpp"
@@ -34,6 +35,7 @@ public:
                          const Vec3& windDirection, float windStrength,
                          const Vec3& playerPosition);
     void setWaterState(float waterLevel, float time, bool underwater);
+    void setPlayerRenderer(PlayerRenderer* renderer, const PlayerRenderState& state);
 
     void drawOpaque(const Mat4& viewProjection, const Vec3& cameraPosition,
                     const Environment& environment, float fogStart, float fogEnd,
@@ -111,6 +113,8 @@ private:
     float waterLevel_ = 56.0f;
     float time_ = 0.0f;
     bool underwater_ = false;
+    PlayerRenderer* playerRenderer_ = nullptr;
+    PlayerRenderState playerState_{};
 
     GLuint shadowFbo_ = 0;
     GLuint shadowTexture_ = 0;

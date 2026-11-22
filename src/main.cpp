@@ -25,6 +25,7 @@ void printUsage() {
                  "  --render-distance N  chunk render radius (default 6)\n"
                  "  --grass-distance N   grass mesh radius (default 3)\n"
                  "  --threads N          chunk generation threads (default: auto)\n"
+                 "  --third-person       start in third-person view\n"
                  "  --camera X Y Z YAW PITCH  override camera (debug/screenshots)\n"
                  "  --help             show this help\n");
 }
@@ -163,6 +164,8 @@ int main(int argc, char** argv) {
                 nc::logError("invalid --threads");
                 return 1;
             }
+        } else if (std::strcmp(argument, "--third-person") == 0) {
+            options.thirdPerson = true;
         } else if (std::strcmp(argument, "--camera") == 0) {
             float values[5] = {};
             for (float& target : values) {

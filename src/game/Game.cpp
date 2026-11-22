@@ -199,7 +199,11 @@ bool Game::init(const GameOptions& options, std::string* error) {
     if (!hud_.init(assets_, textures_, error)) {
         return false;
     }
+    if (!playerRenderer_.init(assets_, error)) {
+        return false;
+    }
 
+    thirdPerson_ = options_.thirdPerson;
     timeOfDay_ = options_.timeOfDay;
     timeSpeed_ = options_.timeSpeed;
     waterLevel_ = static_cast<float>(World::kSeaLevel);
@@ -269,14 +273,34 @@ bool Game::init(const GameOptions& options, std::string* error) {
             options_.grassDistance);
 
     hotbar_.clear();
+    storage_.clear();
+    heldStack_ = {};
     for (const std::string& name : blocks_.hotbarNames()) {
         const int blockId = blocks_.id(name);
-        if (blockId > 0) {
-            hotbar_.push_back(blockId);
+        if (blockId > 0 && hotbar_.size() < 9) {
+            hotbar_.push_back(ItemStack{blockId, 64});
         }
     }
-    if (hotbar_.empty()) {
-        hotbar_.push_back(blocks_.id("stone") > 0 ? blocks_.id("stone") : 1);
+    while (hotbar_.size() < 9) {
+        hotbar_.push_back(ItemStack{});
+    }
+
+    static const char* kStorageBlocks[] = {
+        "stone_slab", "cobblestone_slab", "oak_slab", "sandstone_slab", "brick_slab",
+        "sandstone", "brick_block", "oak_leaves", "bookshelf", "crafting_table",
+        "furnace", "obsidian", "netherrack", "glowstone", "ice",
+        "snow", "clay", "hardened_clay", "tnt", "pumpkin",
+        "melon_block", "hay_block", "quartz_block", "white_wool", "red_wool",
+        "blue_wool", "black_wool",
+    };
+    for (const char* name : kStorageBlocks) {
+        const int blockId = blocks_.id(name);
+        if (blockId > 0 && storage_.size() < 27) {
+            storage_.push_back(ItemStack{blockId, 64});
+        }
+    }
+    while (storage_.size() < 27) {
+        storage_.push_back(ItemStack{});
     }
 
     if (!screenshotMode_) {
@@ -357,7 +381,14 @@ void Game::processEvents(bool& running) {
             }
             switch (event.key.keysym.sym) {
             case SDLK_ESCAPE:
-                running = false;
+                if (inventoryOpen_) {
+                    closeInventory();
+                } else {
+                    running = false;
+                }
+                break;
+            case SDLK_e:
+                toggleInventory();
                 break;
             case SDLK_f:
                 player_.flying = !player_.flying;
@@ -365,8 +396,13 @@ void Game::processEvents(bool& running) {
                 logInfo("fly mode %s", player_.flying ? "enabled" : "disabled");
                 break;
             case SDLK_m:
-                mouseCaptured_ = !mouseCaptured_;
-                SDL_SetRelativeMouseMode(mouseCaptured_ ? SDL_TRUE : SDL_FALSE);
+                if (!inventoryOpen_) {
+                    mouseCaptured_ = !mouseCaptured_;
+                    SDL_SetRelativeMouseMode(mouseCaptured_ ? SDL_TRUE : SDL_FALSE);
+                }
+                break;
+            case SDLK_F5:
+                thirdPerson_ = !thirdPerson_;
                 break;
             case SDLK_t:
                 timePaused_ = !timePaused_;
@@ -397,7 +433,12 @@ void Game::processEvents(bool& running) {
             }
             break;
         case SDL_MOUSEBUTTONDOWN:
-            if (mouseCaptured_ && !screenshotMode_) {
+            if (inventoryOpen_) {
+                int mouseX = 0;
+                int mouseY = 0;
+                SDL_GetMouseState(&mouseX, &mouseY);
+                handleInventoryClick(mouseX, mouseY, event.button.button);
+            } else if (mouseCaptured_ && !screenshotMode_) {
                 if (event.button.button == SDL_BUTTON_LEFT) {
                     handleBreak();
                 } else if (event.button.button == SDL_BUTTON_RIGHT) {
@@ -406,7 +447,7 @@ void Game::processEvents(bool& running) {
             }
             break;
         case SDL_MOUSEWHEEL:
-            if (!hotbar_.empty() && event.wheel.y != 0) {
+            if (!inventoryOpen_ && !hotbar_.empty() && event.wheel.y != 0) {
                 const int direction = event.wheel.y > 0 ? 1 : -1;
                 selectedSlot_ = (selectedSlot_ + direction
                                  + static_cast<int>(hotbar_.size()))
@@ -479,8 +520,17 @@ void Game::update(float deltaTime) {
     input.jump = keys[SDL_SCANCODE_SPACE] != 0;
     input.descend = keys[SDL_SCANCODE_LCTRL] != 0 || keys[SDL_SCANCODE_RCTRL] != 0;
     input.boost = keys[SDL_SCANCODE_LSHIFT] != 0 || keys[SDL_SCANCODE_RSHIFT] != 0;
+    if (inventoryOpen_) {
+        input = {};
+    }
 
     player_.update(*world_, blocks_, input, deltaTime);
+
+    const float horizontalSpeed = std::sqrt(player_.velocity.x * player_.velocity.x
+                                             + player_.velocity.z * player_.velocity.z);
+    walkAmount_ = clampf(horizontalSpeed / 4.3f, 0.0f, 1.0f);
+    walkPhase_ += deltaTime * (5.0f + horizontalSpeed * 1.4f);
+    attackSwing_ = std::max(0.0f, attackSwing_ - deltaTime * 4.5f);
 
     const ChunkPos movedCenter =
         World::chunkOf(static_cast<int>(std::floor(player_.position.x)),
@@ -524,6 +574,19 @@ void Game::update(float deltaTime) {
     }
 }
 
+PlayerRenderState Game::buildPlayerRenderState() const {
+    PlayerRenderState state;
+    state.position = player_.position;
+    state.bodyYaw = player_.yaw;
+    state.headPitch = player_.pitch;
+    state.walkPhase = walkPhase_;
+    state.walkAmount = walkAmount_;
+    state.attackSwing = attackSwing_;
+    state.onGround = player_.onGround;
+    state.inWater = player_.inWater;
+    return state;
+}
+
 void Game::render() {
     int width = 1;
     int height = 1;
@@ -536,10 +599,17 @@ void Game::render() {
     const float reflectionFogStart = viewDistance * 0.42f;
     const float reflectionFogEnd = viewDistance * 0.92f;
 
-    const Vec3 eye = player_.eye();
-    const int eyeX = static_cast<int>(std::floor(eye.x));
-    const int eyeY = static_cast<int>(std::floor(eye.y));
-    const int eyeZ = static_cast<int>(std::floor(eye.z));
+    Vec3 viewEye = player_.eye();
+    Vec3 viewForward = player_.forward();
+    Mat4 view = player_.viewMatrix();
+    if (thirdPerson_) {
+        viewEye = player_.eye() - viewForward * 3.2f + Vec3{0.0f, 0.45f, 0.0f};
+        view = Mat4::lookAt(viewEye, viewEye + viewForward, {0.0f, 1.0f, 0.0f});
+    }
+
+    const int eyeX = static_cast<int>(std::floor(viewEye.x));
+    const int eyeY = static_cast<int>(std::floor(viewEye.y));
+    const int eyeZ = static_cast<int>(std::floor(viewEye.z));
     const int eyeBlock = world_->get(eyeX, eyeY, eyeZ);
     underwater_ = blocks_.isLiquid(eyeBlock);
     underwaterLava_ = underwater_ && blocks_.def(eyeBlock).name == "lava";
@@ -569,6 +639,8 @@ void Game::render() {
         }
     }
     worldRenderer_.setWaterState(waterLevel_, elapsedTime_, underwater_);
+    const PlayerRenderState playerState = buildPlayerRenderState();
+    worldRenderer_.setPlayerRenderer(&playerRenderer_, playerState);
 
     const int reflectionWidth = std::max(1, width);
     const int reflectionHeight = std::max(1, height);
@@ -584,9 +656,8 @@ void Game::render() {
     worldRenderer_.renderShadowMap(player_.position, environment_.sunDirection, elapsedTime_,
                                   windDirection_, windStrength_, player_.position);
 
-    const Vec3 reflectedEye{eye.x, 2.0f * waterLevel_ - eye.y, eye.z};
-    const Vec3 forward = player_.forward();
-    const Vec3 reflectedForward{forward.x, -forward.y, forward.z};
+    const Vec3 reflectedEye{viewEye.x, 2.0f * waterLevel_ - viewEye.y, viewEye.z};
+    const Vec3 reflectedForward{viewForward.x, -viewForward.y, viewForward.z};
     const Vec3 up = std::abs(reflectedForward.y) > 0.99f ? Vec3{0.0f, 0.0f, 1.0f}
                                                          : Vec3{0.0f, 1.0f, 0.0f};
     const Mat4 reflectionView = Mat4::lookAt(reflectedEye, reflectedEye + reflectedForward, up);
@@ -605,6 +676,10 @@ void Game::render() {
                     elapsedTime_);
         worldRenderer_.drawOpaque(reflectionViewProjection, reflectedEye, environment_,
                                   reflectionFogStart, reflectionFogEnd, true, waterLevel_, true);
+        if (thirdPerson_) {
+            playerRenderer_.render(reflectionViewProjection, reflectedEye, environment_,
+                                   reflectionFogStart, reflectionFogEnd, playerState);
+        }
         reflection_.unbind();
     }
 
@@ -615,16 +690,19 @@ void Game::render() {
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     const Mat4 projection = Mat4::perspective(radians(70.0f), aspect, 0.1f, 300.0f);
-    const Mat4 view = player_.viewMatrix();
     const Mat4 viewProjection = projection * view;
 
-    sky_.render(viewProjection.inverse(), eye, renderEnvironment, elapsedTime_);
-    worldRenderer_.drawOpaque(viewProjection, eye, renderEnvironment, fogStart, fogEnd, false,
-                              0.0f, false);
-    worldRenderer_.drawGrass(viewProjection, eye, renderEnvironment, fogStart, fogEnd,
+    sky_.render(viewProjection.inverse(), viewEye, renderEnvironment, elapsedTime_);
+    worldRenderer_.drawOpaque(viewProjection, viewEye, renderEnvironment, fogStart, fogEnd,
+                              false, 0.0f, false);
+    worldRenderer_.drawGrass(viewProjection, viewEye, renderEnvironment, fogStart, fogEnd,
                              elapsedTime_, player_.position, windDirection_, windStrength_);
-    worldRenderer_.drawTransparent(viewProjection, eye, renderEnvironment, fogStart, fogEnd);
-    worldRenderer_.drawWater(viewProjection, eye, renderEnvironment, fogStart, fogEnd,
+    if (thirdPerson_) {
+        playerRenderer_.render(viewProjection, viewEye, renderEnvironment, fogStart, fogEnd,
+                               playerState);
+    }
+    worldRenderer_.drawTransparent(viewProjection, viewEye, renderEnvironment, fogStart, fogEnd);
+    worldRenderer_.drawWater(viewProjection, viewEye, renderEnvironment, fogStart, fogEnd,
                              reflection_.colorTexture(), reflectionViewProjection,
                              elapsedTime_, waterLevel_);
     drawHud();
@@ -636,6 +714,11 @@ void Game::drawHud() {
     SDL_GetWindowSize(window_, &width, &height);
 
     hud_.begin(width, height);
+    if (inventoryOpen_) {
+        drawInventory(width, height);
+        hud_.end();
+        return;
+    }
     if (underwater_) {
         const Vec3 tint = underwaterLava_ ? Vec3{0.55f, 0.20f, 0.05f}
                                           : Vec3{0.02f, 0.20f, 0.30f};
@@ -703,13 +786,20 @@ void Game::drawHud() {
             hud_.drawRect(sx, baseY, slotSize, slotSize,
                           selected ? Vec3{0.28f, 0.28f, 0.28f} : Vec3{0.12f, 0.12f, 0.12f},
                           0.9f);
-            const int blockId = hotbar_[static_cast<std::size_t>(i)];
-            if (blockId > 0) {
-                const BlockDef& block = blocks_.def(blockId);
+            const ItemStack& stack = hotbar_[static_cast<std::size_t>(i)];
+            if (stack.blockId > 0 && stack.count > 0) {
+                const BlockDef& block = blocks_.def(stack.blockId);
                 const int up = static_cast<int>(Face::Up);
                 const Vec3 tint{block.tints[up][0], block.tints[up][1], block.tints[up][2]};
                 hud_.drawBlockIcon(sx + 4.0f, baseY + 4.0f, slotSize - 8.0f, block.layers[up],
                                    tint, 0.95f);
+                if (stack.count > 1) {
+                    const std::string countText = std::to_string(stack.count);
+                    const float countScale = 1.1f;
+                    const float countWidth = hud_.textWidth(countText, countScale);
+                    shadowText(sx + slotSize - 3.0f - countWidth, baseY + slotSize - 15.0f,
+                               countText, countScale, {1.0f, 1.0f, 1.0f});
+                }
             }
             shadowText(sx + 4.0f, baseY + 3.0f, std::to_string(i + 1), 1.4f,
                        {0.92f, 0.92f, 0.92f});
@@ -725,13 +815,196 @@ void Game::drawHud() {
     hud_.end();
 }
 
+std::array<float, 4> Game::inventorySlotRect(int index, int width, int height) const {
+    constexpr float slotSize = 40.0f;
+    constexpr float gap = 4.0f;
+    constexpr int columns = 9;
+    constexpr int rows = 4;
+    const float totalWidth = columns * slotSize + (columns - 1) * gap;
+    const float totalHeight = rows * slotSize + (rows - 1) * gap;
+    const float originX = (static_cast<float>(width) - totalWidth) * 0.5f;
+    const float originY = (static_cast<float>(height) - totalHeight) * 0.5f;
+    const int row = index / columns;
+    const int column = index % columns;
+    return {originX + column * (slotSize + gap), originY + row * (slotSize + gap), slotSize,
+            slotSize};
+}
+
+int Game::inventorySlotAt(int mouseX, int mouseY, int width, int height) const {
+    for (int index = 0; index < 36; ++index) {
+        const auto rect = inventorySlotRect(index, width, height);
+        if (static_cast<float>(mouseX) >= rect[0] && static_cast<float>(mouseX) < rect[0] + rect[2]
+            && static_cast<float>(mouseY) >= rect[1]
+            && static_cast<float>(mouseY) < rect[1] + rect[3]) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+ItemStack* Game::inventoryStackAt(int index) {
+    if (index < 0 || index >= 36) {
+        return nullptr;
+    }
+    if (index < 27) {
+        if (static_cast<std::size_t>(index) >= storage_.size()) {
+            return nullptr;
+        }
+        return &storage_[static_cast<std::size_t>(index)];
+    }
+    const int hotbarIndex = index - 27;
+    if (hotbarIndex < 0 || static_cast<std::size_t>(hotbarIndex) >= hotbar_.size()) {
+        return nullptr;
+    }
+    return &hotbar_[static_cast<std::size_t>(hotbarIndex)];
+}
+
+void Game::toggleInventory() {
+    if (inventoryOpen_) {
+        closeInventory();
+        return;
+    }
+    inventoryOpen_ = true;
+    mouseCaptured_ = false;
+    SDL_SetRelativeMouseMode(SDL_FALSE);
+    SDL_ShowCursor(SDL_ENABLE);
+}
+
+void Game::closeInventory() {
+    if (heldStack_.blockId > 0 && heldStack_.count > 0) {
+        for (ItemStack& stack : storage_) {
+            if (stack.blockId == 0 || stack.count <= 0) {
+                stack = heldStack_;
+                heldStack_ = {};
+                break;
+            }
+        }
+        if (heldStack_.blockId > 0) {
+            for (ItemStack& stack : hotbar_) {
+                if (stack.blockId == 0 || stack.count <= 0) {
+                    stack = heldStack_;
+                    heldStack_ = {};
+                    break;
+                }
+            }
+        }
+        heldStack_ = {};
+    }
+    inventoryOpen_ = false;
+    mouseCaptured_ = true;
+    SDL_SetRelativeMouseMode(SDL_TRUE);
+    SDL_ShowCursor(SDL_DISABLE);
+}
+
+void Game::handleInventoryClick(int mouseX, int mouseY, int button) {
+    int width = 1;
+    int height = 1;
+    SDL_GetWindowSize(window_, &width, &height);
+    const int slotIndex = inventorySlotAt(mouseX, mouseY, width, height);
+    if (slotIndex < 0) {
+        return;
+    }
+    ItemStack* target = inventoryStackAt(slotIndex);
+    if (!target) {
+        return;
+    }
+
+    if (button == SDL_BUTTON_LEFT) {
+        const bool heldEmpty = heldStack_.blockId == 0 || heldStack_.count <= 0;
+        const bool targetEmpty = target->blockId == 0 || target->count <= 0;
+        if (heldEmpty) {
+            heldStack_ = *target;
+            *target = {};
+        } else if (targetEmpty) {
+            *target = heldStack_;
+            heldStack_ = {};
+        } else {
+            std::swap(*target, heldStack_);
+        }
+    } else if (button == SDL_BUTTON_RIGHT && slotIndex >= 27) {
+        selectedSlot_ = slotIndex - 27;
+    }
+}
+
+void Game::drawInventory(int width, int height) {
+    constexpr float slotSize = 40.0f;
+    constexpr float gap = 4.0f;
+    constexpr int columns = 9;
+    constexpr int rows = 4;
+    const float totalWidth = columns * slotSize + (columns - 1) * gap;
+    const float totalHeight = rows * slotSize + (rows - 1) * gap;
+    const float originX = (static_cast<float>(width) - totalWidth) * 0.5f;
+    const float originY = (static_cast<float>(height) - totalHeight) * 0.5f;
+
+    hud_.drawRect(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height),
+                  {0.0f, 0.0f, 0.0f}, 0.55f);
+    hud_.drawRect(originX - 14.0f, originY - 48.0f, totalWidth + 28.0f, totalHeight + 64.0f,
+                  {0.08f, 0.08f, 0.10f}, 0.94f);
+    hud_.drawText(originX, originY - 38.0f, "Inventory", 2.0f, {1.0f, 1.0f, 1.0f});
+
+    int mouseX = 0;
+    int mouseY = 0;
+    SDL_GetMouseState(&mouseX, &mouseY);
+    const int hovered = inventorySlotAt(mouseX, mouseY, width, height);
+
+    for (int index = 0; index < 36; ++index) {
+        const auto rect = inventorySlotRect(index, width, height);
+        const bool hotbarSlot = index >= 27;
+        const bool selected = hotbarSlot && index - 27 == selectedSlot_;
+        if (selected) {
+            hud_.drawRect(rect[0] - 2.0f, rect[1] - 2.0f, rect[2] + 4.0f, rect[3] + 4.0f,
+                          {1.0f, 1.0f, 1.0f}, 0.95f);
+        }
+        hud_.drawRect(rect[0], rect[1], rect[2], rect[3],
+                      hovered == index ? Vec3{0.30f, 0.30f, 0.30f}
+                                       : Vec3{0.14f, 0.14f, 0.18f},
+                      0.96f);
+        ItemStack* stack = inventoryStackAt(index);
+        if (stack && stack->blockId > 0 && stack->count > 0) {
+            const BlockDef& block = blocks_.def(stack->blockId);
+            const int up = static_cast<int>(Face::Up);
+            const Vec3 tint{block.tints[up][0], block.tints[up][1], block.tints[up][2]};
+            hud_.drawBlockIcon(rect[0] + 4.0f, rect[1] + 4.0f, rect[2] - 8.0f,
+                               block.layers[up], tint, 0.98f);
+            if (stack->count > 1) {
+                const std::string countText = std::to_string(stack->count);
+                const float countScale = 1.1f;
+                const float countWidth = hud_.textWidth(countText, countScale);
+                hud_.drawText(rect[0] + rect[2] - 3.0f - countWidth, rect[1] + rect[3] - 15.0f,
+                              countText, countScale, {1.0f, 1.0f, 1.0f});
+            }
+        }
+        if (hotbarSlot) {
+            hud_.drawText(rect[0] + 3.0f, rect[1] + 2.0f, std::to_string(index - 26), 1.1f,
+                          {0.75f, 0.75f, 0.75f});
+        }
+    }
+
+    if (heldStack_.blockId > 0 && heldStack_.count > 0) {
+        const BlockDef& block = blocks_.def(heldStack_.blockId);
+        const int up = static_cast<int>(Face::Up);
+        const Vec3 tint{block.tints[up][0], block.tints[up][1], block.tints[up][2]};
+        hud_.drawBlockIcon(static_cast<float>(mouseX) - 20.0f, static_cast<float>(mouseY) - 20.0f,
+                           40.0f, block.layers[up], tint, 1.0f);
+        if (heldStack_.count > 1) {
+            hud_.drawText(static_cast<float>(mouseX) + 4.0f, static_cast<float>(mouseY) + 4.0f,
+                          std::to_string(heldStack_.count), 1.2f, {1.0f, 1.0f, 1.0f});
+        }
+    }
+
+    hud_.drawText(originX, originY + totalHeight + 8.0f,
+                  "Left click: move item    Right click hotbar: select    E: close", 1.3f,
+                  {0.85f, 0.85f, 0.85f});
+}
+
 int Game::selectedBlockId() const {
     if (hotbar_.empty()) {
         return 0;
     }
     const std::size_t index =
         static_cast<std::size_t>(selectedSlot_ < 0 ? 0 : selectedSlot_) % hotbar_.size();
-    return hotbar_[index];
+    const ItemStack& stack = hotbar_[index];
+    return stack.count > 0 ? stack.blockId : 0;
 }
 
 std::string Game::selectedBlockName() const {
@@ -755,6 +1028,7 @@ void Game::handleBreak() {
     if (blockId == 0) {
         return;
     }
+    attackSwing_ = 1.0f;
     world_->set(hit.x, hit.y, hit.z, 0);
     const int tallGrass = blocks_.id("tall_grass");
     if (tallGrass > 0 && world_->get(hit.x, hit.y + 1, hit.z) == tallGrass) {
@@ -803,6 +1077,7 @@ void Game::handlePlace() {
         return;
     }
 
+    attackSwing_ = 1.0f;
     world_->set(px, py, pz, static_cast<std::uint8_t>(blockId));
     worldRenderer_.rebuildAround(*world_, blocks_, px, pz);
     audio_.playSound(digSound(blockMaterial(blocks_.def(blockId).name), soundCounter_++), 0.6f);
@@ -1048,6 +1323,7 @@ void Game::shutdown() {
     }
     audio_.shutdown();
     hud_.destroy();
+    playerRenderer_.destroy();
     sky_.destroy();
     reflection_.destroy();
     worldRenderer_.destroy();

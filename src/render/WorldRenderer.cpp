@@ -1121,6 +1121,10 @@ void WorldRenderer::renderShadowTarget(GLuint framebuffer, int size,
         glDrawElements(GL_TRIANGLES, mesh.opaqueIndices, GL_UNSIGNED_INT, nullptr);
     }
 
+    if (playerRenderer_) {
+        playerRenderer_->renderShadow(lightViewProjection, playerState_);
+    }
+
     if (includeGrass) {
         grassShadowShader_.use();
         grassShadowShader_.setMat4("uViewProj", lightViewProjection);
@@ -1206,6 +1210,11 @@ void WorldRenderer::setWaterState(float waterLevel, float time, bool underwater)
     waterLevel_ = waterLevel;
     time_ = time;
     underwater_ = underwater;
+}
+
+void WorldRenderer::setPlayerRenderer(PlayerRenderer* renderer, const PlayerRenderState& state) {
+    playerRenderer_ = renderer;
+    playerState_ = state;
 }
 
 void WorldRenderer::setWorldUniforms(const Mat4& viewProjection, const Vec3& cameraPosition,

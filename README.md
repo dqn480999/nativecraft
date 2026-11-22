@@ -8,6 +8,10 @@ Textures, block models, blockstates, the bitmap font, language files, and sounds
 
 ![World](docs/screenshots/world.png)
 
+![Third-person player model and shadow](docs/screenshots/player.png)
+
+![Inventory](docs/screenshots/inventory.png)
+
 ![Wind and player reactive grass](docs/screenshots/grass.png)
 
 ![Water reflections and waves](docs/screenshots/water.png)
@@ -69,6 +73,7 @@ Useful options:
 --threads N             chunk generation threads, default: auto
 --time T                time of day in [0,1]
 --time-speed S          day cycle speed
+--third-person          start in third-person view
 --camera X Y Z YAW PITCH
 --screenshot PATH
 --raytrace PATH         software ray tracing test render, 1280x720
@@ -85,6 +90,8 @@ Useful options:
 | Ctrl | Swim down or fly down |
 | Shift | Sprint |
 | F | Toggle flight |
+| E | Open or close inventory |
+| F5 | Toggle first/third person view |
 | M | Toggle mouse capture |
 | T | Pause or resume the day cycle |
 | 1-9, mouse wheel | Select hotbar slot |
@@ -110,19 +117,23 @@ Useful options:
 - Water simulation: exposed underwater air refills and connected air pockets below sea level flood.
 - Bottom slabs for stone, cobblestone, oak, sandstone, and bricks with partial collision and step-up.
 - Background music, looping water ambience when swimming, synthetic bird chirps, and low-altitude mist.
+- Third-person Steve player model with skin, walk, idle, jump, swim, and attack animations. The model casts shadows in both shadow cascades.
+- Inventory with 27 storage slots and a 9-slot hotbar, item counts, block icons, click-to-move, and hotbar selection.
 - Frustum culling for shadow, reflection, opaque, grass, transparent, and water passes.
 - Grass LOD: detailed grass meshes are limited to a configurable radius.
 
 ## Current scale
 
 - 87 blocks, 101 unique block textures, 103 texture-array layers.
+- Player and inventory screens; third-person view is available with `--third-person` or F5.
 - Default render radius: 6 chunks (169 meshed chunks, 225+ loaded).
 - About 400,000 triangles in the default view.
 - About 60 FPS at 1280x720 on a GTX 970.
 
 ## Limitations
 
-- No inventory, item entities, crafting, mobs, or networking.
+- No item entities, crafting, mobs, or networking.
+- Inventory is creative-style: placing blocks does not consume stacks, and broken blocks are not picked up.
 - Only cube and bottom-slab block models are supported.
 - Animated textures use the first frame.
 - No weather, volumetric lighting, or cloud shadows.

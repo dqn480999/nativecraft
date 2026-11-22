@@ -120,6 +120,21 @@ All world passes use frustum culling against cached chunk bounds.
 - Water is rendered double-sided when the camera is below the water level so the underside of the surface is visible.
 - A translucent full-screen tint is drawn in the HUD while submerged.
 
+## Player model
+
+- `PlayerRenderer` builds six cuboid parts from the original `textures/entity/steve.png` skin: head, body, arms, and legs.
+- Walk cycle, idle bob, jump pose, swimming motion, head pitch, and attack arm swing are driven by `PlayerRenderState`.
+- The model is rendered in third-person view and in the water reflection when third person is active.
+- The model is rendered into both shadow cascades with a depth-only shader, so the player casts a soft shadow.
+- F5 or `--third-person` toggles the camera.
+
+## Inventory
+
+- 27 storage slots and 9 hotbar slots store block stacks with counts.
+- E opens the inventory; movement is disabled while it is open.
+- Left-click picks up, swaps, or places a stack; right-clicking a hotbar slot selects it.
+- The UI uses the same block icons and bitmap font as the HUD.
+
 ## Ambient audio
 
 - Background music loops `music/game/calm1.ogg` at low gain.
@@ -196,8 +211,8 @@ Verified on:
 
 1. Worker-side mesh construction with immutable chunk snapshots.
 2. Anvil and NBT support for importing existing 1.12.2 saves.
-3. Full block model geometry: `elements`, `multipart`, rotations, `uvlock`, cross models, slabs, stairs, fences, panes.
-4. Inventory, item stacks, block drops, and item pickup.
+3. Full block model geometry: `elements`, `multipart`, rotations, `uvlock`, cross models, stairs, fences, panes.
+4. Item entities, block drops, crafting, and item pickup.
 5. Skylight and blocklight propagation.
 6. Entities and mobs.
 7. Networking and the 1.12.2 protocol.

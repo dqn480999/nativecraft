@@ -84,6 +84,7 @@ Optional arguments:
 --camera X Y Z YAW PITCH  override the camera
 --screenshot PATH         render a PNG and exit
 --raytrace PATH           software ray tracing test render, 1280x720
+--third-person            start in third-person view
 --frames N                frames to render before the screenshot
 --help                    show usage
 ```

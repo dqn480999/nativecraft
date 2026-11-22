@@ -143,6 +143,55 @@ struct Mat4 {
         return out;
     }
 
+    static Mat4 translation(const Vec3& value) {
+        Mat4 out = identity();
+        out.m[12] = value.x;
+        out.m[13] = value.y;
+        out.m[14] = value.z;
+        return out;
+    }
+
+    static Mat4 scale(float factor) {
+        Mat4 out = identity();
+        out.m[0] = factor;
+        out.m[5] = factor;
+        out.m[10] = factor;
+        return out;
+    }
+
+    static Mat4 rotationX(float angle) {
+        Mat4 out = identity();
+        const float c = std::cos(angle);
+        const float s = std::sin(angle);
+        out.m[5] = c;
+        out.m[6] = s;
+        out.m[9] = -s;
+        out.m[10] = c;
+        return out;
+    }
+
+    static Mat4 rotationY(float angle) {
+        Mat4 out = identity();
+        const float c = std::cos(angle);
+        const float s = std::sin(angle);
+        out.m[0] = c;
+        out.m[2] = -s;
+        out.m[8] = s;
+        out.m[10] = c;
+        return out;
+    }
+
+    static Mat4 rotationZ(float angle) {
+        Mat4 out = identity();
+        const float c = std::cos(angle);
+        const float s = std::sin(angle);
+        out.m[0] = c;
+        out.m[1] = s;
+        out.m[4] = -s;
+        out.m[5] = c;
+        return out;
+    }
+
     static Mat4 orthographic(float left, float right, float bottom, float top,
                              float nearPlane, float farPlane) {
         Mat4 out = identity();

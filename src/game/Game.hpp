@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -12,6 +13,7 @@
 #include "game/Player.hpp"
 #include "render/Environment.hpp"
 #include "render/Hud.hpp"
+#include "render/PlayerRenderer.hpp"
 #include "render/ReflectionTarget.hpp"
 #include "render/SkyRenderer.hpp"
 #include "render/TextureArray.hpp"
@@ -20,6 +22,11 @@
 #include "world/World.hpp"
 
 namespace nc {
+
+struct ItemStack {
+    int blockId = 0;
+    int count = 0;
+};
 
 struct GameOptions {
     std::string minecraftDir;
@@ -34,6 +41,7 @@ struct GameOptions {
     int renderDistance = 6;
     int grassDistance = 3;
     int workerThreads = 0;
+    bool thirdPerson = false;
     bool hasCamera = false;
     Vec3 cameraPosition{};
     float cameraYaw = 0.0f;
@@ -56,6 +64,14 @@ private:
     void handlePlace();
     void takeScreenshot(const std::string& path);
     void renderRaytrace(const std::string& path);
+    PlayerRenderState buildPlayerRenderState() const;
+    void toggleInventory();
+    void closeInventory();
+    void handleInventoryClick(int mouseX, int mouseY, int button);
+    void drawInventory(int width, int height);
+    std::array<float, 4> inventorySlotRect(int index, int width, int height) const;
+    int inventorySlotAt(int mouseX, int mouseY, int width, int height) const;
+    ItemStack* inventoryStackAt(int index);
     int selectedBlockId() const;
     std::string selectedBlockName() const;
 
@@ -68,6 +84,7 @@ private:
     TextureArray textures_;
     std::unique_ptr<World> world_;
     WorldRenderer worldRenderer_;
+    PlayerRenderer playerRenderer_;
     SkyRenderer sky_;
     ReflectionTarget reflection_;
     Hud hud_;
@@ -84,11 +101,18 @@ private:
     float windStrength_ = 0.24f;
     bool underwater_ = false;
     bool underwaterLava_ = false;
+    bool thirdPerson_ = false;
+    float walkPhase_ = 0.0f;
+    float walkAmount_ = 0.0f;
+    float attackSwing_ = 0.0f;
     double birdTimer_ = 7.0;
     ChunkPos lastStreamCenter_{};
     bool hasStreamCenter_ = false;
 
-    std::vector<int> hotbar_;
+    std::vector<ItemStack> hotbar_;
+    std::vector<ItemStack> storage_;
+    ItemStack heldStack_{};
+    bool inventoryOpen_ = false;
     int selectedSlot_ = 0;
     bool mouseCaptured_ = false;
     bool screenshotMode_ = false;
