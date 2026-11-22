@@ -18,6 +18,8 @@ Textures, block models, blockstates, the bitmap font, language files, and sounds
 
 ![World overview](docs/screenshots/overview.png)
 
+![Software ray tracing test](docs/screenshots/raytrace.png)
+
 ## Requirements
 
 - C++20 compiler (GCC 16 tested)
@@ -65,6 +67,7 @@ Useful options:
 --time-speed S          day cycle speed
 --camera X Y Z YAW PITCH
 --screenshot PATH
+--raytrace PATH         software ray tracing test render, 640x360
 --frames N
 ```
 
@@ -93,7 +96,9 @@ Useful options:
 - Chunk unloading and binary persistence for modified chunks.
 - Multiple procedural grass types: tall grass, meadow grass, dry grass, and fern with distinct colors, blade counts, and heights.
 - Grass reacts to changing wind direction, gust strength, and the player's position.
-- Two-cascade directional shadows: 4096 near cascade for sharp grass and terrain shadows plus a 4096 far cascade for distant terrain, both with hardware PCF and cached updates.
+- Two-cascade directional shadows: 4096 near cascade for sharp grass and terrain shadows plus a 4096 far cascade covering the render distance, both with hardware PCF and cached updates.
+- Separate near/far normal offsets and bias values reduce sunlight leaks in dark areas.
+- Breakable grass with a raycast hitbox: aim and left-click to remove it, or right-click to replace it with a block.
 - Procedural moving clouds, sun, moon, and stars.
 - Planar water reflections, animated waves, ripples, Fresnel reflections, and specular highlights.
 - Frustum culling for shadow, reflection, opaque, grass, transparent, and water passes.
@@ -114,6 +119,7 @@ Useful options:
 - No weather, volumetric lighting, or cloud shadows.
 - Tall grass has no collision. Its shadows are limited to the near shadow cascade (22 blocks).
 - Chunk generation and disk loading are multithreaded; mesh building and OpenGL uploads remain on the render thread and are budgeted per frame.
+- The software ray tracing test uses flat average texture colors and voxel geometry; it does not render individual grass blades.
 - Grass LOD changes can pop when chunks cross the grass radius.
 - Meshes are rebuilt from chunk data and are not stored on disk.
 

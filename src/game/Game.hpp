@@ -27,6 +27,7 @@ struct GameOptions {
     int height = 720;
     std::uint64_t seed = 12345;
     std::string screenshotPath;
+    std::string raytracePath;
     int screenshotFrames = 0;
     float timeOfDay = 0.32f;
     float timeSpeed = 0.0025f;
@@ -54,6 +55,7 @@ private:
     void handleBreak();
     void handlePlace();
     void takeScreenshot(const std::string& path);
+    void renderRaytrace(const std::string& path);
     int selectedBlockId() const;
     std::string selectedBlockName() const;
 

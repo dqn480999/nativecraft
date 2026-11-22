@@ -33,6 +33,7 @@ bool TextureArray::initialize(int tileSize, int maxLayers) {
     tileSize_ = tileSize;
     maxLayers_ = maxLayers;
     layers_.clear();
+    layerColors_.clear();
     names_.clear();
     uploaded_ = false;
     return true;
@@ -45,6 +46,22 @@ int TextureArray::add(const Image& image, std::string debugName) {
     }
     layers_.push_back(toTile(image, tileSize_));
     names_.push_back(std::move(debugName));
+
+    Vec3 accumulated{};
+    float weight = 0.0f;
+    const std::vector<std::uint8_t>& tile = layers_.back();
+    for (std::size_t pixel = 0; pixel + 3 < tile.size(); pixel += 4) {
+        const float alpha = static_cast<float>(tile[pixel + 3]) / 255.0f;
+        accumulated.x += static_cast<float>(tile[pixel]) * alpha;
+        accumulated.y += static_cast<float>(tile[pixel + 1]) * alpha;
+        accumulated.z += static_cast<float>(tile[pixel + 2]) * alpha;
+        weight += alpha;
+    }
+    if (weight > 0.0f) {
+        layerColors_.push_back(accumulated / (weight * 255.0f));
+    } else {
+        layerColors_.push_back({0.5f, 0.5f, 0.5f});
+    }
     return static_cast<int>(layers_.size()) - 1;
 }
 
@@ -86,6 +103,13 @@ bool TextureArray::upload(std::string* error) {
     uploaded_ = true;
     logInfo("texture array uploaded: %d layers of %dx%d", layerCount(), tileSize_, tileSize_);
     return true;
+}
+
+Vec3 TextureArray::averageColor(int layer) const {
+    if (layer < 0 || static_cast<std::size_t>(layer) >= layerColors_.size()) {
+        return {0.5f, 0.5f, 0.5f};
+    }
+    return layerColors_[static_cast<std::size_t>(layer)];
 }
 
 void TextureArray::destroy() {

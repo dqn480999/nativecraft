@@ -84,7 +84,7 @@ The grass block uses a composited side texture built from `grass_side` and a gre
 
 Each frame runs these passes:
 
-1. **Shadow maps.** Two cascades are rendered from the sun direction. The far cascade is 4096x4096 and covers a 90-block radius around the player with opaque geometry only. The near cascade is 4096x4096, covers 22 blocks, and includes grass blades so grass casts sharp shadows. Both are cached and re-rendered only when the sun, focus, or near-cascade wind animation changes. Sampling uses hardware PCF with a normal-offset bias and a smooth near/far blend.
+1. **Shadow maps.** Two cascades are rendered from the sun direction. The far cascade is 4096x4096 and covers a 130-block radius around the player with opaque geometry only. The near cascade is 4096x4096, covers 22 blocks, and includes grass blades so grass casts sharp shadows. Each cascade has its own normal offset and bias. Both are cached and re-rendered only when the sun, focus, or near-cascade wind animation changes. Sampling uses hardware PCF; the 18-22 block transition takes the darker of the two cascades to avoid sunlight leaks.
 2. **Reflection.** The scene is rendered from a camera mirrored across the water plane into an offscreen color/depth target. The sky and opaque geometry are included. Geometry below the water plane is clipped.
 3. **Sky.** A fullscreen triangle computes sky gradient, sun, moon, stars, and moving clouds from the inverse view-projection matrix.
 4. **Opaque world.** Block textures are lit by sun color, ambient sky/ground, and the shadow map.
@@ -104,6 +104,16 @@ All world passes use frustum culling against cached chunk bounds.
 - The near shadow cascade refreshes at 10 Hz so wind-driven grass shadows animate.
 - Time advances at `--time-speed` per second and can be paused with `T`.
 - Wind direction and strength are computed in `Game::update` and passed to the grass shader.
+
+## Software ray tracing test
+
+`--raytrace PATH` renders a 640x360 image with a CPU voxel ray tracer:
+
+- Primary rays use DDA traversal over the chunk map.
+- Hits use average texture colors and per-face tints.
+- Secondary rays trace toward the sun to test direct shadowing.
+- Rows are distributed across up to 16 worker threads.
+- The test excludes water, vegetation blades, and transparent geometry; it is intended to validate terrain shadows and lighting, not to match the GPU renderer.
 
 ## Threading
 

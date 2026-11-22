@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "core/Math.hpp"
 #include "render/GL.hpp"
 #include "util/Image.hpp"
 
@@ -20,11 +21,13 @@ public:
     int layerCount() const { return static_cast<int>(layers_.size()); }
     int tileSize() const { return tileSize_; }
     bool hasLayer(int layer) const { return layer >= 0 && layer < layerCount(); }
+    Vec3 averageColor(int layer) const;
 
 private:
     int tileSize_ = 16;
     int maxLayers_ = 512;
     std::vector<std::vector<std::uint8_t>> layers_;
+    std::vector<Vec3> layerColors_;
     std::vector<std::string> names_;
     GLuint texture_ = 0;
     bool uploaded_ = false;

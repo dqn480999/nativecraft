@@ -1,11 +1,13 @@
 #include "game/Game.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -42,6 +44,118 @@ std::string stepSound(const std::string& material, int index) {
     return "minecraft/sounds/step/" + material + std::to_string(1 + index % 4) + ".ogg";
 }
 
+}
+
+
+struct VoxelRayHit {
+    bool hit = false;
+    int x = 0;
+    int y = 0;
+    int z = 0;
+    int face = 2;
+    float distance = 0.0f;
+};
+
+Vec3 faceNormal(int face) {
+    switch (face) {
+    case 0: return {1.0f, 0.0f, 0.0f};
+    case 1: return {-1.0f, 0.0f, 0.0f};
+    case 2: return {0.0f, 1.0f, 0.0f};
+    case 3: return {0.0f, -1.0f, 0.0f};
+    case 4: return {0.0f, 0.0f, 1.0f};
+    default: return {0.0f, 0.0f, -1.0f};
+    }
+}
+
+VoxelRayHit traceVoxelRay(const World& world, const BlockRegistry& blocks,
+                          const Vec3& origin, const Vec3& direction, float maxDistance,
+                          bool includeVegetation) {
+    int x = static_cast<int>(std::floor(origin.x));
+    int y = static_cast<int>(std::floor(origin.y));
+    int z = static_cast<int>(std::floor(origin.z));
+
+    const int stepX = direction.x > 0.0f ? 1 : -1;
+    const int stepY = direction.y > 0.0f ? 1 : -1;
+    const int stepZ = direction.z > 0.0f ? 1 : -1;
+
+    constexpr float infinity = std::numeric_limits<float>::infinity();
+    const float deltaX = direction.x == 0.0f ? infinity : std::abs(1.0f / direction.x);
+    const float deltaY = direction.y == 0.0f ? infinity : std::abs(1.0f / direction.y);
+    const float deltaZ = direction.z == 0.0f ? infinity : std::abs(1.0f / direction.z);
+
+    float maxX = direction.x == 0.0f ? infinity
+                                     : ((direction.x > 0.0f ? (x + 1 - origin.x) : (x - origin.x))
+                                        / direction.x);
+    float maxY = direction.y == 0.0f ? infinity
+                                     : ((direction.y > 0.0f ? (y + 1 - origin.y) : (y - origin.y))
+                                        / direction.y);
+    float maxZ = direction.z == 0.0f ? infinity
+                                     : ((direction.z > 0.0f ? (z + 1 - origin.z) : (z - origin.z))
+                                        / direction.z);
+
+    int lastAxis = -1;
+    float distance = 0.0f;
+    for (int i = 0; i < 1024; ++i) {
+        const int block = world.get(x, y, z);
+        if (block > 0) {
+            const BlockDef& def = blocks.def(block);
+            if (!blocks.isLiquid(block)
+                && (blocks.isSolid(block) || (includeVegetation && def.cross))) {
+                int face = static_cast<int>(Face::Up);
+                if (lastAxis == 0) {
+                    face = stepX > 0 ? static_cast<int>(Face::West)
+                                     : static_cast<int>(Face::East);
+                } else if (lastAxis == 1) {
+                    face = stepY > 0 ? static_cast<int>(Face::Down)
+                                     : static_cast<int>(Face::Up);
+                } else if (lastAxis == 2) {
+                    face = stepZ > 0 ? static_cast<int>(Face::North)
+                                     : static_cast<int>(Face::South);
+                }
+                VoxelRayHit hit;
+                hit.hit = true;
+                hit.x = x;
+                hit.y = y;
+                hit.z = z;
+                hit.face = face;
+                hit.distance = distance;
+                return hit;
+            }
+        }
+
+        if (maxX < maxY && maxX < maxZ) {
+            distance = maxX;
+            x += stepX;
+            maxX += deltaX;
+            lastAxis = 0;
+        } else if (maxY < maxZ) {
+            distance = maxY;
+            y += stepY;
+            maxY += deltaY;
+            lastAxis = 1;
+        } else {
+            distance = maxZ;
+            z += stepZ;
+            maxZ += deltaZ;
+            lastAxis = 2;
+        }
+
+        if (distance > maxDistance) {
+            break;
+        }
+    }
+    return {};
+}
+
+Vec3 raySkyColor(const Vec3& direction, const Environment& environment) {
+    const float up = clampf(direction.y, 0.0f, 1.0f);
+    Vec3 sky = environment.skyHorizon
+             + (environment.skyZenith - environment.skyHorizon) * std::pow(up, 0.45f);
+    const float sunAmount = dot(direction, environment.sunDirection);
+    sky += environment.sunColor
+         * (std::pow(std::max(sunAmount, 0.0f), 400.0f) * 0.5f
+            + std::pow(std::max(sunAmount, 0.0f), 16.0f) * 0.05f);
+    return sky;
 }
 
 bool Game::init(const GameOptions& options, std::string* error) {
@@ -602,9 +716,15 @@ void Game::handlePlace() {
         return;
     }
 
-    const int px = hit.previousX;
-    const int py = hit.previousY;
-    const int pz = hit.previousZ;
+    int px = hit.previousX;
+    int py = hit.previousY;
+    int pz = hit.previousZ;
+    const int hitBlockId = world_->get(hit.x, hit.y, hit.z);
+    if (blocks_.def(hitBlockId).cross) {
+        px = hit.x;
+        py = hit.y;
+        pz = hit.z;
+    }
     if (py < 0 || py >= World::kHeight) {
         return;
     }
@@ -665,7 +785,130 @@ void Game::takeScreenshot(const std::string& path) {
     }
 }
 
+void Game::renderRaytrace(const std::string& path) {
+    constexpr int width = 640;
+    constexpr int height = 360;
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4);
+
+    const Vec3 eye = player_.eye();
+    const Vec3 forward = player_.forward();
+    Vec3 right = normalize(cross(forward, {0.0f, 1.0f, 0.0f}));
+    if (lengthSquared(right) < 1e-6f) {
+        right = {1.0f, 0.0f, 0.0f};
+    }
+    const Vec3 up = normalize(cross(right, forward));
+    const float tangent = std::tan(radians(70.0f) * 0.5f);
+    const float aspect = static_cast<float>(width) / static_cast<float>(height);
+    const Environment environment = environment_;
+
+    std::atomic<int> nextRow{0};
+    unsigned int threadCount = std::thread::hardware_concurrency();
+    threadCount = std::max(1u, std::min(16u, threadCount));
+
+    const auto worker = [&]() {
+        while (true) {
+            const int row = nextRow.fetch_add(1);
+            if (row >= height) {
+                return;
+            }
+            for (int column = 0; column < width; ++column) {
+                const float ndcX = (2.0f * (static_cast<float>(column) + 0.5f) / width - 1.0f)
+                                 * tangent * aspect;
+                const float ndcY = (1.0f - 2.0f * (static_cast<float>(row) + 0.5f) / height)
+                                 * tangent;
+                const Vec3 direction = normalize(forward + right * ndcX + up * ndcY);
+
+                const VoxelRayHit hit =
+                    traceVoxelRay(*world_, blocks_, eye, direction, 110.0f, false);
+
+                Vec3 color;
+                if (!hit.hit) {
+                    color = raySkyColor(direction, environment);
+                } else {
+                    const int blockId = world_->get(hit.x, hit.y, hit.z);
+                    const BlockDef& block = blocks_.def(blockId);
+                    const int faceIndex = hit.face;
+                    const int layer = block.layers[static_cast<std::size_t>(faceIndex)];
+                    const Vec3 base = textures_.averageColor(layer);
+                    Vec3 albedo{
+                        base.x * block.tints[static_cast<std::size_t>(faceIndex)][0],
+                        base.y * block.tints[static_cast<std::size_t>(faceIndex)][1],
+                        base.z * block.tints[static_cast<std::size_t>(faceIndex)][2],
+                    };
+
+                    const Vec3 normal = faceNormal(faceIndex);
+                    const float sun = std::max(dot(normal, environment.sunDirection), 0.0f);
+                    bool shadowed = false;
+                    if (sun > 0.0f && environment.sunDirection.y > 0.0f) {
+                        const Vec3 point = eye + direction * hit.distance;
+                        const Vec3 shadowOrigin{
+                            point.x + normal.x * 0.51f,
+                            point.y + normal.y * 0.51f,
+                            point.z + normal.z * 0.51f,
+                        };
+                        shadowed = traceVoxelRay(*world_, blocks_, shadowOrigin,
+                                                 environment.sunDirection, 120.0f, false)
+                                       .hit;
+                    }
+
+                    const Vec3 ambient = environment.ambientGround
+                                       + (environment.ambientSky - environment.ambientGround)
+                                             * (normal.y * 0.5f + 0.5f);
+                    const Vec3 light = ambient
+                                     + environment.sunColor * (sun * (shadowed ? 0.0f : 1.0f));
+                    color = {albedo.x * light.x, albedo.y * light.y, albedo.z * light.z};
+
+                    const float fog = clampf((hit.distance - 45.0f) / (140.0f - 45.0f), 0.0f,
+                                             1.0f);
+                    color = color + (environment.fogColor - color) * fog;
+                }
+
+                std::uint8_t* pixel =
+                    pixels.data() + (static_cast<std::size_t>(row) * width + column) * 4;
+                pixel[0] = static_cast<std::uint8_t>(
+                    clampf(color.x, 0.0f, 1.0f) * 255.0f);
+                pixel[1] = static_cast<std::uint8_t>(
+                    clampf(color.y, 0.0f, 1.0f) * 255.0f);
+                pixel[2] = static_cast<std::uint8_t>(
+                    clampf(color.z, 0.0f, 1.0f) * 255.0f);
+                pixel[3] = 255;
+            }
+        }
+    };
+
+    const auto start = std::chrono::steady_clock::now();
+    std::vector<std::thread> workers;
+    workers.reserve(threadCount);
+    for (unsigned int i = 0; i < threadCount; ++i) {
+        workers.emplace_back(worker);
+    }
+    for (std::thread& thread : workers) {
+        thread.join();
+    }
+    const auto elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start);
+
+    const std::filesystem::path target(path);
+    if (target.has_parent_path()) {
+        std::error_code errorCode;
+        std::filesystem::create_directories(target.parent_path(), errorCode);
+    }
+
+    std::string error;
+    if (!writePng(path, width, height, pixels.data(), &error)) {
+        logError("raytrace failed: %s", error.c_str());
+    } else {
+        logInfo("raytrace test saved: %s (%dx%d, %.2fs, %u threads)", path.c_str(), width,
+                height, elapsed.count(), threadCount);
+    }
+}
+
 int Game::run() {
+    if (!options_.raytracePath.empty()) {
+        renderRaytrace(options_.raytracePath);
+        return 0;
+    }
+
     bool running = true;
     lastCounter_ = SDL_GetPerformanceCounter();
 

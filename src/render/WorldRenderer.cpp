@@ -111,7 +111,8 @@ layout(location = 4) in vec4 aColor;
 uniform mat4 uViewProj;
 uniform mat4 uLightVPNear;
 uniform mat4 uLightVPFar;
-uniform float uShadowNormalOffset;
+uniform float uShadowNormalOffsetNear;
+uniform float uShadowNormalOffsetFar;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
@@ -127,9 +128,10 @@ void main() {
     vNormal = aNormal;
     vUV = vec3(aUV, aLayer);
     vColor = aColor;
-    vec4 offsetPosition = vec4(aPos + aNormal * uShadowNormalOffset, 1.0);
-    vShadowCoordNear = uLightVPNear * offsetPosition;
-    vShadowCoordFar = uLightVPFar * offsetPosition;
+    vShadowCoordNear = uLightVPNear
+                     * vec4(aPos + aNormal * uShadowNormalOffsetNear, 1.0);
+    vShadowCoordFar = uLightVPFar
+                    * vec4(aPos + aNormal * uShadowNormalOffsetFar, 1.0);
 }
 )";
 
@@ -169,7 +171,7 @@ float shadowFactorNear(vec4 shadowCoord, vec3 normal) {
         || projected.y < 0.0 || projected.y > 1.0) {
         return 1.0;
     }
-    float bias = max(0.0008 * (1.0 - max(dot(normal, uSunDir), 0.0)), 0.0002);
+    float bias = max(0.00025 * (1.0 - max(dot(normal, uSunDir), 0.0)), 0.00008);
     vec2 texel = 1.0 / vec2(textureSize(uShadowMapNear, 0));
     float sum = 0.0;
     for (int x = -1; x <= 1; ++x) {
@@ -190,7 +192,7 @@ float shadowFactorFar(vec4 shadowCoord, vec3 normal) {
         || projected.y < 0.0 || projected.y > 1.0) {
         return 1.0;
     }
-    float bias = max(0.0008 * (1.0 - max(dot(normal, uSunDir), 0.0)), 0.0002);
+    float bias = max(0.0005 * (1.0 - max(dot(normal, uSunDir), 0.0)), 0.00015);
     vec2 texel = 1.0 / vec2(textureSize(uShadowMapFar, 0));
     float sum = 0.0;
     for (int x = -1; x <= 1; ++x) {
@@ -214,14 +216,14 @@ void main() {
     vec3 normal = normalize(vNormal);
     float sun = max(dot(normal, uSunDir), 0.0);
     float distanceToCamera = length(vWorldPos - uCameraPos);
-    float nearWeight = 1.0 - smoothstep(uNearShadowDistance - 4.0, uNearShadowDistance,
-                                        distanceToCamera);
-    float shadow = 0.0;
-    if (nearWeight > 0.0) {
-        shadow += nearWeight * shadowFactorNear(vShadowCoordNear, normal);
-    }
-    if (nearWeight < 1.0) {
-        shadow += (1.0 - nearWeight) * shadowFactorFar(vShadowCoordFar, normal);
+    float shadow = 1.0;
+    if (distanceToCamera < uNearShadowDistance - 4.0) {
+        shadow = shadowFactorNear(vShadowCoordNear, normal);
+    } else if (distanceToCamera > uNearShadowDistance) {
+        shadow = shadowFactorFar(vShadowCoordFar, normal);
+    } else {
+        shadow = min(shadowFactorNear(vShadowCoordNear, normal),
+                     shadowFactorFar(vShadowCoordFar, normal));
     }
     shadow = mix(1.0, shadow, uShadowStrength);
     vec3 ambient = mix(uAmbientGround, uAmbientSky, normal.y * 0.5 + 0.5);
@@ -1058,7 +1060,7 @@ void WorldRenderer::renderShadowMap(const Vec3& focus, const Vec3& sunDirection,
     if (farDirty) {
         const Vec3 center{focus.x, 64.0f, focus.z};
         const Mat4 lightView = Mat4::lookAt(center + sunDirection * 140.0f, center, up);
-        const float extent = 90.0f;
+        const float extent = 130.0f;
         lightViewProjection_ = Mat4::orthographic(-extent, extent, -extent, extent, 1.0f,
                                                   320.0f)
                              * lightView;
@@ -1105,7 +1107,8 @@ void WorldRenderer::setWorldUniforms(const Mat4& viewProjection, const Vec3& cam
     shader_.setFloat("uUseClip", useClip ? 1.0f : 0.0f);
     shader_.setFloat("uClipY", clipY);
     shader_.setFloat("uShadowStrength", 0.82f);
-    shader_.setFloat("uShadowNormalOffset", 0.03f);
+    shader_.setFloat("uShadowNormalOffsetNear", 0.012f);
+    shader_.setFloat("uShadowNormalOffsetFar", 0.06f);
     shader_.setInt("uAtlas", 0);
     shader_.setInt("uShadowMapNear", 2);
     shader_.setInt("uShadowMapFar", 1);

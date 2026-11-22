@@ -239,7 +239,8 @@ RayHit Player::raycast(const World& world, const BlockRegistry& registry,
 
     for (int i = 0; i < 256; ++i) {
         const int block = world.get(x, y, z);
-        if (registry.isSolid(block) && !registry.isLiquid(block)) {
+        const bool vegetation = registry.def(block).cross;
+        if ((registry.isSolid(block) || vegetation) && !registry.isLiquid(block)) {
             RayHit hit;
             hit.hit = true;
             hit.x = x;

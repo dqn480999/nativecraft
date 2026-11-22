@@ -18,6 +18,7 @@ void printUsage() {
                  "  --height N         window height (default 720)\n"
                  "  --seed N           world seed (default 12345)\n"
                  "  --screenshot PATH  render to PATH and exit\n"
+                 "  --raytrace PATH    software ray tracing test render and exit\n"
                  "  --frames N         frames before screenshot (default 90)\n"
                  "  --time T           time of day in [0,1] (default 0.32)\n"
                  "  --time-speed S     time advance per second (default 0.0025)\n"
@@ -120,6 +121,12 @@ int main(int argc, char** argv) {
                 return 1;
             }
             options.screenshotPath = value;
+        } else if (std::strcmp(argument, "--raytrace") == 0) {
+            const char* value = requireValue("--raytrace");
+            if (!value) {
+                return 1;
+            }
+            options.raytracePath = value;
         } else if (std::strcmp(argument, "--frames") == 0) {
             const char* value = requireValue("--frames");
             if (!value || !parseInt(value, options.screenshotFrames, 1, 100000)) {
