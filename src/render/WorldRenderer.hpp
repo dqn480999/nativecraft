@@ -22,6 +22,8 @@ public:
 
     void syncMeshes(const World& world, const BlockRegistry& registry, const ChunkPos& center,
                     int renderRadius, int grassRadius);
+    bool isSyncedFor(const World& world, const ChunkPos& center, int renderRadius,
+                     int grassRadius) const;
     void rebuildChunk(const World& world, const BlockRegistry& registry, int chunkX,
                       int chunkZ, bool includeGrass);
     void rebuildAround(const World& world, const BlockRegistry& registry, int x, int z);

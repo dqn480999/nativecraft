@@ -23,6 +23,7 @@ void printUsage() {
                  "  --time-speed S     time advance per second (default 0.0025)\n"
                  "  --render-distance N  chunk render radius (default 6)\n"
                  "  --grass-distance N   grass mesh radius (default 3)\n"
+                 "  --threads N          chunk generation threads (default: auto)\n"
                  "  --camera X Y Z YAW PITCH  override camera (debug/screenshots)\n"
                  "  --help             show this help\n");
 }
@@ -147,6 +148,12 @@ int main(int argc, char** argv) {
             const char* value = requireValue("--grass-distance");
             if (!value || !parseInt(value, options.grassDistance, 0, 16)) {
                 nc::logError("invalid --grass-distance");
+                return 1;
+            }
+        } else if (std::strcmp(argument, "--threads") == 0) {
+            const char* value = requireValue("--threads");
+            if (!value || !parseInt(value, options.workerThreads, 0, 16)) {
+                nc::logError("invalid --threads");
                 return 1;
             }
         } else if (std::strcmp(argument, "--camera") == 0) {

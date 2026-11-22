@@ -3,11 +3,15 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <future>
+#include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/Math.hpp"
+#include "core/ThreadPool.hpp"
 #include "world/Blocks.hpp"
 
 namespace nc {
@@ -32,11 +36,13 @@ public:
     static constexpr int kSeaLevel = 56;
     static constexpr int kChunkVolume = kChunkSize * kChunkSize * kHeight;
 
-    World(std::uint64_t seed, std::string saveDirectory = {});
+    World(std::uint64_t seed, std::string saveDirectory = {}, int workerThreads = 0);
     ~World();
 
     void updateStreaming(const Vec3& playerPosition, int radius,
                          const BlockRegistry& registry);
+    void pumpCompleted();
+    bool isStreamingIdle() const { return pending_.empty(); }
 
     std::uint8_t get(int x, int y, int z) const;
     void set(int x, int y, int z, std::uint8_t block);
@@ -61,19 +67,38 @@ private:
         bool modified = false;
     };
 
+    struct ChunkData {
+        ChunkPos pos;
+        std::array<std::uint8_t, kChunkVolume> blocks{};
+        bool loadedFromDisk = false;
+    };
+
+    struct PendingJob {
+        ChunkPos pos;
+        std::future<ChunkData> future;
+    };
+
     static int localIndex(int x, int y, int z);
     static int floorDiv(int value, int divisor);
+    static void generateChunkBlocks(const ChunkPos& pos,
+                                    std::array<std::uint8_t, kChunkVolume>& blocks,
+                                    std::uint64_t seed, const BlockRegistry& registry);
     Chunk* findChunk(const ChunkPos& pos);
     const Chunk* findChunk(const ChunkPos& pos) const;
-    Chunk& ensureChunk(const ChunkPos& pos, const BlockRegistry& registry);
-    void generateChunk(const ChunkPos& pos, Chunk& chunk, const BlockRegistry& registry);
-    bool loadChunk(const ChunkPos& pos, Chunk& chunk);
+    bool loadChunkBlocks(const ChunkPos& pos,
+                         std::array<std::uint8_t, kChunkVolume>& blocks) const;
     void saveChunk(const ChunkPos& pos, const Chunk& chunk);
     std::string chunkFilePath(const ChunkPos& pos) const;
 
     std::uint64_t seed_ = 0;
     std::string saveDirectory_;
     std::unordered_map<ChunkPos, Chunk, ChunkPosHash> chunks_;
+    std::unordered_set<ChunkPos, ChunkPosHash> pending_;
+    std::vector<PendingJob> pendingJobs_;
+    ChunkPos streamCenter_{};
+    int streamRadius_ = 6;
+    bool hasStreamCenter_ = false;
+    std::unique_ptr<ThreadPool> pool_;
 };
 
 }

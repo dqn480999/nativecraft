@@ -804,14 +804,69 @@ void WorldRenderer::syncMeshes(const World& world, const BlockRegistry& registry
         }
     }
 
+    struct Candidate {
+        ChunkPos pos;
+        bool includeGrass = false;
+        int distance = 0;
+    };
+    std::vector<Candidate> candidates;
     for (const auto& [pos, includeGrass] : desired) {
         const auto existing = meshes_.find(pos);
-        if (existing == meshes_.end()) {
-            rebuildChunk(world, registry, pos.x, pos.z, includeGrass);
-        } else if (existing->second.grassEnabled != includeGrass) {
-            rebuildChunk(world, registry, pos.x, pos.z, includeGrass);
+        const bool needsBuild = existing == meshes_.end()
+                             || existing->second.grassEnabled != includeGrass;
+        if (!needsBuild) {
+            continue;
+        }
+
+        bool neighborhoodLoaded = true;
+        for (int dz = -1; dz <= 1 && neighborhoodLoaded; ++dz) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                if (!world.isChunkLoaded({pos.x + dx, pos.z + dz})) {
+                    neighborhoodLoaded = false;
+                    break;
+                }
+            }
+        }
+        if (!neighborhoodLoaded) {
+            continue;
+        }
+
+        const int offsetX = pos.x - center.x;
+        const int offsetZ = pos.z - center.z;
+        candidates.push_back(Candidate{pos, includeGrass, offsetX * offsetX + offsetZ * offsetZ});
+    }
+
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& a, const Candidate& b) { return a.distance < b.distance; });
+
+    constexpr int kMeshBuildBudget = 2;
+    int built = 0;
+    for (const Candidate& candidate : candidates) {
+        if (built >= kMeshBuildBudget) {
+            break;
+        }
+        rebuildChunk(world, registry, candidate.pos.x, candidate.pos.z, candidate.includeGrass);
+        ++built;
+    }
+}
+
+bool WorldRenderer::isSyncedFor(const World& world, const ChunkPos& center, int renderRadius,
+                                int grassRadius) const {
+    for (int dz = -renderRadius; dz <= renderRadius; ++dz) {
+        for (int dx = -renderRadius; dx <= renderRadius; ++dx) {
+            const ChunkPos pos{center.x + dx, center.z + dz};
+            if (!world.isChunkLoaded(pos)) {
+                return false;
+            }
+            const bool includeGrass =
+                std::abs(dx) <= grassRadius && std::abs(dz) <= grassRadius;
+            const auto existing = meshes_.find(pos);
+            if (existing == meshes_.end() || existing->second.grassEnabled != includeGrass) {
+                return false;
+            }
         }
     }
+    return true;
 }
 
 void WorldRenderer::rebuildAround(const World& world, const BlockRegistry& registry, int x,

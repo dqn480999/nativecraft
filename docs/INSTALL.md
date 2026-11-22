@@ -78,6 +78,7 @@ Optional arguments:
 --seed N                  world seed, default 12345
 --render-distance N       chunk render radius, default 6
 --grass-distance N        radius with grass meshes, default 3
+--threads N               chunk generation threads, default: auto
 --time T                  time of day in [0,1], default 0.32
 --time-speed S            time advance per second, default 0.0025
 --camera X Y Z YAW PITCH  override the camera
@@ -127,7 +128,7 @@ Modified chunks are written to `saves/<seed>/chunks/<x>_<z>.nc`. Unmodified chun
 
 ### Performance
 
-Shadow mapping uses a 4096x4096 depth map with hardware PCF. Water reflections render the scene a second time at the window resolution. The default render radius of 6 chunks keeps more than 200 chunks loaded and about 400,000 triangles in view. Reduce `--render-distance` and `--grass-distance` on slower GPUs.
+Shadow mapping uses a 4096x4096 depth map with hardware PCF. Water reflections render the scene a second time at the window resolution. Chunk generation and disk loading run on a worker pool. Mesh construction is limited to two chunks per frame on the render thread. The default render radius of 6 chunks keeps more than 200 chunks loaded and about 400,000 triangles in view. Reduce `--render-distance`, `--grass-distance`, and `--threads` on slower CPUs or GPUs.
 
 ### Wayland
 

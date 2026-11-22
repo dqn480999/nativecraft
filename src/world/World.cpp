@@ -1,9 +1,11 @@
 #include "world/World.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 #include <utility>
 
 #include "core/Log.hpp"
@@ -87,9 +89,16 @@ std::size_t ChunkPosHash::operator()(const ChunkPos& pos) const noexcept {
     return static_cast<std::size_t>(value >> 32u);
 }
 
-World::World(std::uint64_t seed, std::string saveDirectory)
+World::World(std::uint64_t seed, std::string saveDirectory, int workerThreads)
     : seed_(seed)
     , saveDirectory_(std::move(saveDirectory)) {
+    if (workerThreads <= 0) {
+        const unsigned int hardware = std::thread::hardware_concurrency();
+        workerThreads = hardware > 2 ? std::min(static_cast<int>(hardware) - 1, 8) : 1;
+    }
+    workerThreads = std::clamp(workerThreads, 1, 16);
+    pool_ = std::make_unique<ThreadPool>(static_cast<std::size_t>(workerThreads));
+    logInfo("world: %d chunk worker threads", workerThreads);
 }
 
 World::~World() {
@@ -153,7 +162,8 @@ std::string World::chunkFilePath(const ChunkPos& pos) const {
          + std::to_string(pos.z) + ".nc";
 }
 
-bool World::loadChunk(const ChunkPos& pos, Chunk& chunk) {
+bool World::loadChunkBlocks(const ChunkPos& pos,
+                             std::array<std::uint8_t, kChunkVolume>& blocks) const {
     const std::string path = chunkFilePath(pos);
     if (path.empty()) {
         return false;
@@ -177,14 +187,8 @@ bool World::loadChunk(const ChunkPos& pos, Chunk& chunk) {
         || z != pos.z || volume != kChunkVolume) {
         return false;
     }
-    file.read(reinterpret_cast<char*>(chunk.blocks.data()), kChunkVolume);
-    if (!file) {
-        return false;
-    }
-    chunk.generated = true;
-    chunk.modified = false;
-    logInfo("loaded chunk %d,%d from disk", pos.x, pos.z);
-    return true;
+    file.read(reinterpret_cast<char*>(blocks.data()), kChunkVolume);
+    return static_cast<bool>(file);
 }
 
 void World::saveChunk(const ChunkPos& pos, const Chunk& chunk) {
@@ -253,22 +257,9 @@ void World::saveAll() {
     }
 }
 
-World::Chunk& World::ensureChunk(const ChunkPos& pos, const BlockRegistry& registry) {
-    const auto existing = chunks_.find(pos);
-    if (existing != chunks_.end()) {
-        return existing->second;
-    }
-
-    Chunk chunk;
-    if (!loadChunk(pos, chunk)) {
-        generateChunk(pos, chunk, registry);
-    }
-    const auto [it, inserted] = chunks_.emplace(pos, std::move(chunk));
-    (void)inserted;
-    return it->second;
-}
-
-void World::generateChunk(const ChunkPos& pos, Chunk& chunk, const BlockRegistry& registry) {
+void World::generateChunkBlocks(const ChunkPos& pos,
+                               std::array<std::uint8_t, kChunkVolume>& blocks,
+                               std::uint64_t seed, const BlockRegistry& registry) {
     const int stone = registry.id("stone");
     const int dirt = registry.id("dirt");
     const int grass = registry.id("grass");
@@ -294,10 +285,10 @@ void World::generateChunk(const ChunkPos& pos, Chunk& chunk, const BlockRegistry
             const int worldX = baseX + localX;
             const int worldZ = baseZ + localZ;
             const float base = fbm(static_cast<float>(worldX) * 0.014f,
-                                   static_cast<float>(worldZ) * 0.014f, seed_, 4);
+                                   static_cast<float>(worldZ) * 0.014f, seed, 4);
             const float detail = fbm(static_cast<float>(worldX) * 0.06f,
                                      static_cast<float>(worldZ) * 0.06f,
-                                     seed_ ^ 0xA5A5A5A5ull, 3);
+                                     seed ^ 0xA5A5A5A5ull, 3);
             int height = 50 + static_cast<int>(base * 20.0f)
                        + static_cast<int>(detail * 6.0f);
             height = std::clamp(height, 8, kHeight - 12);
@@ -310,7 +301,7 @@ void World::generateChunk(const ChunkPos& pos, Chunk& chunk, const BlockRegistry
                     block = bedrock;
                 } else if (y < height - 4) {
                     block = stone;
-                    const std::uint32_t ore = hash3(worldX, y, worldZ, seed_ ^ 0x12345678ull);
+                    const std::uint32_t ore = hash3(worldX, y, worldZ, seed ^ 0x12345678ull);
                     if (ore % 1409u == 0u) {
                         block = coal;
                     } else if (ore % 2803u == 0u) {
@@ -326,7 +317,7 @@ void World::generateChunk(const ChunkPos& pos, Chunk& chunk, const BlockRegistry
                     block = water;
                 }
                 if (block != 0) {
-                    chunk.blocks[static_cast<std::size_t>(localIndex(localX, y, localZ))] =
+                    blocks[static_cast<std::size_t>(localIndex(localX, y, localZ))] =
                         static_cast<std::uint8_t>(block);
                 }
             }
@@ -337,20 +328,20 @@ void World::generateChunk(const ChunkPos& pos, Chunk& chunk, const BlockRegistry
         for (int localX = 3; localX < kChunkSize - 3; ++localX) {
             const int worldX = baseX + localX;
             const int worldZ = baseZ + localZ;
-            const std::uint32_t treeHash = hash3(worldX, 0, worldZ, seed_ ^ 0xC0FFEEull);
+            const std::uint32_t treeHash = hash3(worldX, 0, worldZ, seed ^ 0xC0FFEEull);
             if (treeHash % 233u != 0u) {
                 continue;
             }
             const int ground = heights[localZ * kChunkSize + localX] - 1;
             if (ground + 9 >= kHeight
-                || chunk.blocks[static_cast<std::size_t>(localIndex(localX, ground, localZ))]
+                || blocks[static_cast<std::size_t>(localIndex(localX, ground, localZ))]
                        != grass) {
                 continue;
             }
 
             const int trunkHeight = 4 + static_cast<int>((treeHash >> 8u) % 3u);
             for (int i = 1; i <= trunkHeight; ++i) {
-                chunk.blocks[static_cast<std::size_t>(localIndex(localX, ground + i, localZ))] =
+                blocks[static_cast<std::size_t>(localIndex(localX, ground + i, localZ))] =
                     static_cast<std::uint8_t>(log);
             }
 
@@ -369,7 +360,7 @@ void World::generateChunk(const ChunkPos& pos, Chunk& chunk, const BlockRegistry
                             continue;
                         }
                         std::uint8_t& target =
-                            chunk.blocks[static_cast<std::size_t>(localIndex(lx, ly, lz))];
+                            blocks[static_cast<std::size_t>(localIndex(lx, ly, lz))];
                         if (target == 0) {
                             target = static_cast<std::uint8_t>(leaves);
                         }
@@ -383,24 +374,23 @@ void World::generateChunk(const ChunkPos& pos, Chunk& chunk, const BlockRegistry
         for (int localX = 1; localX < kChunkSize - 1; ++localX) {
             const int worldX = baseX + localX;
             const int worldZ = baseZ + localZ;
-            if (hash3(worldX, 1, worldZ, seed_ ^ 0x51A55ull) % 3u == 0u) {
+            if (hash3(worldX, 1, worldZ, seed ^ 0x51A55ull) % 3u == 0u) {
                 continue;
             }
             const int ground = heights[localZ * kChunkSize + localX] - 1;
             if (ground < 1 || ground + 1 >= kHeight) {
                 continue;
             }
-            if (chunk.blocks[static_cast<std::size_t>(localIndex(localX, ground, localZ))]
+            if (blocks[static_cast<std::size_t>(localIndex(localX, ground, localZ))]
                     != grass
-                || chunk.blocks[static_cast<std::size_t>(
-                       localIndex(localX, ground + 1, localZ))]
+                || blocks[static_cast<std::size_t>(localIndex(localX, ground + 1, localZ))]
                        != 0) {
                 continue;
             }
 
             const float biome = fbm(static_cast<float>(worldX) * 0.014f,
                                     static_cast<float>(worldZ) * 0.014f,
-                                    seed_ ^ 0xB10Eull, 3);
+                                    seed ^ 0xB10Eull, 3);
             int vegetation = tallGrass;
             if (biome < 0.32f) {
                 vegetation = dryGrass;
@@ -412,7 +402,7 @@ void World::generateChunk(const ChunkPos& pos, Chunk& chunk, const BlockRegistry
                 vegetation = fern;
             }
 
-            const std::uint32_t grassHash = hash3(worldX, 2, worldZ, seed_ ^ 0xA11CEull);
+            const std::uint32_t grassHash = hash3(worldX, 2, worldZ, seed ^ 0xA11CEull);
             if (grassHash % 11u == 0u) {
                 vegetation = dryGrass;
             } else if (grassHash % 13u == 0u) {
@@ -424,15 +414,12 @@ void World::generateChunk(const ChunkPos& pos, Chunk& chunk, const BlockRegistry
                 vegetation = tallGrass;
             }
             if (vegetation > 0) {
-                chunk.blocks[static_cast<std::size_t>(
-                    localIndex(localX, ground + 1, localZ))] =
+                blocks[static_cast<std::size_t>(localIndex(localX, ground + 1, localZ))] =
                     static_cast<std::uint8_t>(vegetation);
             }
         }
     }
 
-    chunk.generated = true;
-    chunk.modified = false;
 }
 
 void World::updateStreaming(const Vec3& playerPosition, int radius,
@@ -441,16 +428,31 @@ void World::updateStreaming(const Vec3& playerPosition, int radius,
     const int playerX = static_cast<int>(std::floor(playerPosition.x));
     const int playerZ = static_cast<int>(std::floor(playerPosition.z));
     const ChunkPos center = chunkOf(playerX, playerZ);
+    streamCenter_ = center;
+    streamRadius_ = radius;
+    hasStreamCenter_ = true;
     const int generateRadius = radius + 1;
 
-    int created = 0;
+    int queued = 0;
     for (int dz = -generateRadius; dz <= generateRadius; ++dz) {
         for (int dx = -generateRadius; dx <= generateRadius; ++dx) {
             const ChunkPos pos{center.x + dx, center.z + dz};
-            if (chunks_.find(pos) == chunks_.end()) {
-                ensureChunk(pos, registry);
-                ++created;
+            if (chunks_.find(pos) != chunks_.end() || pending_.find(pos) != pending_.end()) {
+                continue;
             }
+            pending_.insert(pos);
+            auto future = pool_->submit([this, pos, &registry]() {
+                ChunkData data;
+                data.pos = pos;
+                if (loadChunkBlocks(pos, data.blocks)) {
+                    data.loadedFromDisk = true;
+                } else {
+                    generateChunkBlocks(pos, data.blocks, seed_, registry);
+                }
+                return data;
+            });
+            pendingJobs_.push_back(PendingJob{pos, std::move(future)});
+            ++queued;
         }
     }
 
@@ -466,9 +468,51 @@ void World::updateStreaming(const Vec3& playerPosition, int radius,
         unload(pos);
     }
 
-    if (created > 0) {
-        logInfo("streaming: +%d chunks, loaded=%zu, center=%d,%d", created, chunks_.size(),
-                center.x, center.z);
+    if (queued > 0) {
+        logInfo("streaming: queued=%d pending=%zu loaded=%zu center=%d,%d", queued,
+                pending_.size(), chunks_.size(), center.x, center.z);
+    }
+}
+
+void World::pumpCompleted() {
+    int completed = 0;
+    for (auto it = pendingJobs_.begin(); it != pendingJobs_.end();) {
+        if (it->future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            ++it;
+            continue;
+        }
+
+        ChunkData data;
+        try {
+            data = it->future.get();
+        } catch (const std::exception& ex) {
+            logWarn("chunk job failed: %s", ex.what());
+            pending_.erase(it->pos);
+            it = pendingJobs_.erase(it);
+            continue;
+        }
+
+        pending_.erase(data.pos);
+        if (hasStreamCenter_
+            && (std::abs(data.pos.x - streamCenter_.x) > streamRadius_ + 2
+                || std::abs(data.pos.z - streamCenter_.z) > streamRadius_ + 2)) {
+            it = pendingJobs_.erase(it);
+            continue;
+        }
+        Chunk& chunk = chunks_[data.pos];
+        chunk.blocks = data.blocks;
+        chunk.generated = true;
+        chunk.modified = false;
+        if (data.loadedFromDisk) {
+            logInfo("loaded chunk %d,%d from disk", data.pos.x, data.pos.z);
+        }
+        it = pendingJobs_.erase(it);
+        ++completed;
+    }
+
+    if (completed > 0) {
+        logInfo("streaming: +%d chunks, loaded=%zu, pending=%zu", completed, chunks_.size(),
+                pending_.size());
     }
 }
 

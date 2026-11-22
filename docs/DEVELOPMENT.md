@@ -21,6 +21,7 @@ Assets are never copied into the repository.
 
 ```text
 src/main.cpp                  CLI parsing and startup
+src/core/ThreadPool.hpp       worker pool for asynchronous chunk jobs
 src/game/Game.*               event loop, streaming updates, HUD, screenshots, sound
 src/game/Player.*             camera, movement, collision, raycast, spawn search
 src/world/World.*             chunk map, per-chunk generation, streaming, save files
@@ -45,12 +46,14 @@ src/core/Log.hpp              logging
 ## Chunk streaming and persistence
 
 - `World` stores chunks in an `unordered_map` keyed by signed chunk coordinates.
-- `updateStreaming` generates chunks inside `renderRadius + 1` and unloads chunks beyond `renderRadius + 2`.
+- `updateStreaming` submits generation and disk-load jobs for chunks inside `renderRadius + 1` and unloads chunks beyond `renderRadius + 2`.
+- Chunk generation and disk loading run on a bounded `ThreadPool`. The main thread polls completed jobs with `pumpCompleted`.
 - Chunk generation is deterministic from the world seed and chunk coordinates.
 - Modified chunks are written to `saves/<seed>/chunks/<x>_<z>.nc` when unloaded or when the world is saved.
 - The chunk file format is a small binary header (magic, version, chunk coordinates, volume) followed by the raw block array.
 - Unmodified chunks are regenerated from the seed. Meshes are always rebuilt from chunk data and are not stored on disk.
-- `WorldRenderer::syncMeshes` keeps a mesh map keyed by chunk coordinates. It builds new meshes, removes unloaded chunks, and rebuilds meshes when the grass LOD status changes.
+- `WorldRenderer::syncMeshes` keeps a mesh map keyed by chunk coordinates. It removes unloaded chunks, waits for a 3x3 chunk neighborhood, then builds at most two meshes per frame in nearest-first order.
+- Meshes are rebuilt on the render thread because OpenGL buffer uploads require the main context.
 
 ## Asset pipeline
 
@@ -103,7 +106,11 @@ All world passes use frustum culling against cached chunk bounds.
 
 ## Threading
 
-The client is single-threaded. Chunk generation, meshing, shadow rendering, reflection rendering, input, and the main render pass all run on the main thread. Fast movement can cause short generation hitches.
+- Chunk generation and chunk file loading run on a worker pool (`ThreadPool`).
+- The default worker count uses the available hardware threads, capped at 8. `--threads N` overrides it up to 16.
+- The main thread owns the chunk map, player, input, shadow/reflection passes, mesh uploads, and rendering.
+- Mesh construction is budgeted to two chunks per frame in nearest-first order.
+- OpenGL calls stay on the main thread.
 
 ## Build and test
 
@@ -131,13 +138,15 @@ Verified on:
 - 1280x720
 - About 60 FPS
 - Default render radius 6 chunks
+- Chunk worker pool: auto up to 8 threads (configurable up to 16)
+- Mesh build budget: 2 chunks per frame
 - 169 meshed chunks and more than 225 loaded chunks
 - About 400,000 triangles in the default view
 - 82 blocks, 101 textures, 103 texture-array layers
 
 ## Next work
 
-1. Asynchronous chunk generation and meshing to remove movement hitches.
+1. Worker-side mesh construction with immutable chunk snapshots.
 2. Anvil and NBT support for importing existing 1.12.2 saves.
 3. Full block model geometry: `elements`, `multipart`, rotations, `uvlock`, cross models, slabs, stairs, fences, panes.
 4. Inventory, item stacks, block drops, and item pickup.

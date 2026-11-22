@@ -32,6 +32,7 @@ struct GameOptions {
     float timeSpeed = 0.0025f;
     int renderDistance = 6;
     int grassDistance = 3;
+    int workerThreads = 0;
     bool hasCamera = false;
     Vec3 cameraPosition{};
     float cameraYaw = 0.0f;

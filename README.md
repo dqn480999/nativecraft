@@ -1,6 +1,6 @@
 # NativeCraft
 
-A native C++20 Minecraft-style client with an infinite procedural world. It does not use Java or the JVM. Rendering, terrain generation, chunk streaming, persistence, and audio are implemented from scratch.
+A native C++20 Minecraft-style client with an infinite procedural world. It does not use Java or the JVM. Rendering, multithreaded terrain generation, chunk streaming, persistence, and audio are implemented from scratch.
 
 Textures, block models, blockstates, the bitmap font, language files, and sounds are read from a local Minecraft 1.12.2 installation. The repository does not contain Minecraft assets.
 
@@ -60,6 +60,7 @@ Useful options:
 --seed N                world seed
 --render-distance N     chunk render radius, default 6
 --grass-distance N      radius with grass meshes, default 3
+--threads N             chunk generation threads, default: auto
 --time T                time of day in [0,1]
 --time-speed S          day cycle speed
 --camera X Y Z YAW PITCH
@@ -88,6 +89,7 @@ Useful options:
 ## Rendering and world features
 
 - Infinite chunk streaming around the player with deterministic seed-based generation.
+- Chunk generation and disk loading run on a worker pool; mesh construction is budgeted to two chunks per frame.
 - Chunk unloading and binary persistence for modified chunks.
 - Multiple procedural grass types: tall grass, meadow grass, dry grass, and fern with distinct colors, blade counts, and heights.
 - Grass reacts to changing wind direction, gust strength, and the player's position.
@@ -111,7 +113,7 @@ Useful options:
 - Animated textures use the first frame.
 - No weather, volumetric lighting, or cloud shadows.
 - Tall grass has no collision and does not cast shadows.
-- Chunk generation and meshing are synchronous, so fast movement can cause short hitches.
+- Chunk generation and disk loading are multithreaded; mesh building and OpenGL uploads remain on the render thread and are budgeted per frame.
 - Grass LOD changes can pop when chunks cross the grass radius.
 - Meshes are rebuilt from chunk data and are not stored on disk.
 

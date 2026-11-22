@@ -1,10 +1,12 @@
 #include "game/Game.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <thread>
 #include <vector>
 
 #include "core/Log.hpp"
@@ -93,8 +95,20 @@ bool Game::init(const GameOptions& options, std::string* error) {
     }
 
     const std::string saveDirectory = "saves/" + std::to_string(options_.seed);
-    world_ = std::make_unique<World>(options_.seed, saveDirectory);
+    world_ = std::make_unique<World>(options_.seed, saveDirectory, options_.workerThreads);
+
+    const auto waitForStreaming = [this](int timeoutMs) {
+        const auto deadline = std::chrono::steady_clock::now()
+                            + std::chrono::milliseconds(timeoutMs);
+        while (!world_->isStreamingIdle()
+               && std::chrono::steady_clock::now() < deadline) {
+            world_->pumpCompleted();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
     world_->updateStreaming({0.0f, 64.0f, 0.0f}, options_.renderDistance, blocks_);
+    waitForStreaming(15000);
     player_.spawn(*world_, blocks_);
     player_.yaw = 35.0f;
     player_.pitch = -18.0f;
@@ -106,11 +120,28 @@ bool Game::init(const GameOptions& options, std::string* error) {
         player_.velocity = {};
     }
     world_->updateStreaming(player_.position, options_.renderDistance, blocks_);
+    waitForStreaming(15000);
     lastStreamCenter_ = World::chunkOf(static_cast<int>(std::floor(player_.position.x)),
                                        static_cast<int>(std::floor(player_.position.z)));
     hasStreamCenter_ = true;
     worldRenderer_.syncMeshes(*world_, blocks_, lastStreamCenter_, options_.renderDistance,
                               options_.grassDistance);
+
+    if (screenshotMode_) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+        while ((!world_->isStreamingIdle()
+                || !worldRenderer_.isSyncedFor(*world_, lastStreamCenter_,
+                                               options_.renderDistance,
+                                               options_.grassDistance))
+               && std::chrono::steady_clock::now() < deadline) {
+            world_->pumpCompleted();
+            world_->updateStreaming(player_.position, options_.renderDistance, blocks_);
+            worldRenderer_.syncMeshes(*world_, blocks_, lastStreamCenter_,
+                                      options_.renderDistance, options_.grassDistance);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+
     logInfo("world seed=%llu renderDistance=%d grassDistance=%d",
             static_cast<unsigned long long>(options_.seed), options_.renderDistance,
             options_.grassDistance);
@@ -296,6 +327,18 @@ void Game::update(float deltaTime) {
                                + 0.06f * std::sin(windTime * 1.7f + 0.4f),
                            0.05f, 0.45f);
 
+    world_->pumpCompleted();
+    ChunkPos center = World::chunkOf(static_cast<int>(std::floor(player_.position.x)),
+                                     static_cast<int>(std::floor(player_.position.z)));
+    if (!hasStreamCenter_ || center.x != lastStreamCenter_.x
+        || center.z != lastStreamCenter_.z) {
+        world_->updateStreaming(player_.position, options_.renderDistance, blocks_);
+        lastStreamCenter_ = center;
+        hasStreamCenter_ = true;
+    }
+    worldRenderer_.syncMeshes(*world_, blocks_, center, options_.renderDistance,
+                              options_.grassDistance);
+
     if (screenshotMode_) {
         return;
     }
@@ -312,15 +355,14 @@ void Game::update(float deltaTime) {
 
     player_.update(*world_, blocks_, input, deltaTime);
 
-    const ChunkPos center = World::chunkOf(static_cast<int>(std::floor(player_.position.x)),
-                                           static_cast<int>(std::floor(player_.position.z)));
-    if (!hasStreamCenter_ || center.x != lastStreamCenter_.x
-        || center.z != lastStreamCenter_.z) {
+    const ChunkPos movedCenter =
+        World::chunkOf(static_cast<int>(std::floor(player_.position.x)),
+                       static_cast<int>(std::floor(player_.position.z)));
+    if (movedCenter.x != lastStreamCenter_.x || movedCenter.z != lastStreamCenter_.z) {
         world_->updateStreaming(player_.position, options_.renderDistance, blocks_);
-        worldRenderer_.syncMeshes(*world_, blocks_, center, options_.renderDistance,
+        worldRenderer_.syncMeshes(*world_, blocks_, movedCenter, options_.renderDistance,
                                   options_.grassDistance);
-        lastStreamCenter_ = center;
-        hasStreamCenter_ = true;
+        lastStreamCenter_ = movedCenter;
     }
 
     if (!player_.flying && player_.onGround) {
