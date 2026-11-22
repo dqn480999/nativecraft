@@ -275,7 +275,7 @@ std::array<Mat4, PlayerRenderer::PartCount> PlayerRenderer::buildPartMatrices(
     const PlayerRenderState& state) const {
     const float bob = std::sin(state.walkPhase * 2.0f) * 0.018f * state.walkAmount;
     const Mat4 base = Mat4::translation(state.position + Vec3{0.0f, bob, 0.0f})
-                    * Mat4::rotationY(radians(state.bodyYaw))
+                    * Mat4::rotationY(radians(-state.bodyYaw))
                     * Mat4::scale(0.9f);
 
     float swing = std::sin(state.walkPhase) * 0.7f * state.walkAmount;
