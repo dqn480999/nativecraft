@@ -1,0 +1,7 @@
+/build/
+/shots/
+/screenshots/
+*.o
+*.a
+*.d
+compile_commands.json
