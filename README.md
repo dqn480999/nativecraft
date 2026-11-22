@@ -96,7 +96,7 @@ Useful options:
 - Chunk unloading and binary persistence for modified chunks.
 - Multiple procedural grass types: tall grass, meadow grass, dry grass, and fern with distinct colors, blade counts, and heights.
 - Grass reacts to changing wind direction, gust strength, and the player's position.
-- Two-cascade directional shadows: 4096 near cascade for sharp grass and terrain shadows plus a 4096 far cascade covering the render distance, both with a 16-tap rotated Poisson PCF kernel for soft shadow edges, and cached updates.
+- Two-cascade directional shadows: 4096 near cascade for detailed grass and terrain shadows plus a 4096 far cascade covering the render distance, both with a 16-tap rotated Poisson PCF kernel for soft shadow edges, and cached updates.
 - Separate near/far normal offsets and bias values reduce sunlight leaks in dark areas.
 - Breakable grass with a raycast hitbox: aim and left-click to remove it, or right-click to replace it with a block.
 - Procedural moving clouds, sun, moon, and stars.
