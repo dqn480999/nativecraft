@@ -273,42 +273,65 @@ bool PlayerRenderer::createBox(Part& part, const Vec3& min, const Vec3& max,
 
 std::array<Mat4, PlayerRenderer::PartCount> PlayerRenderer::buildPartMatrices(
     const PlayerRenderState& state) const {
-    const float bob = std::sin(state.walkPhase * 2.0f) * 0.018f * state.walkAmount;
+    const float walk = state.walkAmount;
+    const float idle = std::sin(state.time * 1.7f);
+    const float bob = std::sin(state.walkPhase * 2.0f) * 0.02f * walk + idle * 0.004f;
+    const float sway = std::sin(state.walkPhase) * 1.2f * walk;
     const Mat4 base = Mat4::translation(state.position + Vec3{0.0f, bob, 0.0f})
-                    * Mat4::rotationY(radians(-state.bodyYaw))
+                    * Mat4::rotationY(radians(-state.bodyYaw + sway))
+                    * Mat4::rotationX(radians(-walk * 2.5f))
                     * Mat4::scale(0.9f);
 
-    float swing = std::sin(state.walkPhase) * 0.7f * state.walkAmount;
-    float leftArm = -swing * 0.8f;
-    float rightArm = swing * 0.8f;
+    float swing = std::sin(state.walkPhase) * 0.75f * walk;
+    float leftArm = -swing * 0.85f;
+    float rightArm = swing * 0.85f;
     float leftLeg = swing;
     float rightLeg = -swing;
+    float leftArmOut = radians(-3.5f - walk * 2.0f - idle * 1.2f);
+    float rightArmOut = radians(3.5f + walk * 2.0f + idle * 1.2f);
 
     if (state.inWater) {
-        const float swim = std::sin(state.walkPhase * 1.4f) * 0.35f;
+        const float swim = std::sin(state.walkPhase * 1.4f) * 0.4f;
         leftArm = -swim * 1.2f;
         rightArm = swim * 1.2f;
         leftLeg = swim;
         rightLeg = -swim;
+        leftArmOut = radians(-12.0f);
+        rightArmOut = radians(12.0f);
     } else if (!state.onGround) {
-        leftLeg = -0.35f;
-        rightLeg = 0.35f;
-        leftArm = -0.5f;
-        rightArm = -0.5f;
+        const float rise = clampf(state.verticalVelocity / 8.0f, -1.0f, 1.0f);
+        leftArm = -0.55f + rise * 0.35f;
+        rightArm = -0.55f + rise * 0.35f;
+        leftLeg = 0.30f + rise * 0.15f;
+        rightLeg = -0.30f - rise * 0.15f;
+        leftArmOut = radians(-9.0f);
+        rightArmOut = radians(9.0f);
     }
 
+    leftArm += std::sin(state.time * 1.5f) * 0.02f * (1.0f - walk);
+    rightArm -= std::sin(state.time * 1.5f) * 0.02f * (1.0f - walk);
+
     if (state.attackSwing > 0.0f) {
-        const float attack = std::sin(3.1415926f * std::min(state.attackSwing, 1.0f)) * 1.6f;
+        const float attack = std::sin(3.1415926f * clampf(state.attackSwing, 0.0f, 1.0f))
+                           * 1.6f;
         rightArm -= attack;
+        rightArmOut += radians(4.0f);
     }
+
+    const float headYaw = (walk < 0.12f && state.attackSwing <= 0.0f)
+                            ? std::sin(state.time * 0.35f) * 2.0f
+                            : 0.0f;
 
     std::array<Mat4, PartCount> matrices{};
     matrices[Body] = base * Mat4::translation({0.0f, 0.75f, 0.0f});
     matrices[Head] = base * Mat4::translation({0.0f, 1.5f, 0.0f})
-                   * Mat4::rotationX(radians(-state.headPitch));
+                   * Mat4::rotationY(radians(headYaw))
+                   * Mat4::rotationX(radians(state.headPitch));
     matrices[ArmLeft] = base * Mat4::translation({-0.375f, 1.5f, 0.0f})
+                      * Mat4::rotationZ(leftArmOut)
                       * Mat4::rotationX(leftArm);
     matrices[ArmRight] = base * Mat4::translation({0.375f, 1.5f, 0.0f})
+                       * Mat4::rotationZ(rightArmOut)
                        * Mat4::rotationX(rightArm);
     matrices[LegLeft] = base * Mat4::translation({-0.125f, 0.75f, 0.0f})
                       * Mat4::rotationX(leftLeg);
@@ -316,7 +339,6 @@ std::array<Mat4, PlayerRenderer::PartCount> PlayerRenderer::buildPartMatrices(
                        * Mat4::rotationX(rightLeg);
     return matrices;
 }
-
 void PlayerRenderer::drawPart(const Part& part, const Mat4& model, Shader& shader) {
     if (part.vao == 0) {
         return;

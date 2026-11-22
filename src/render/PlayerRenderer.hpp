@@ -18,6 +18,8 @@ struct PlayerRenderState {
     float walkPhase = 0.0f;
     float walkAmount = 0.0f;
     float attackSwing = 0.0f;
+    float verticalVelocity = 0.0f;
+    float time = 0.0f;
     bool onGround = true;
     bool inWater = false;
 };

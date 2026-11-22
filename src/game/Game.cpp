@@ -528,8 +528,10 @@ void Game::update(float deltaTime) {
 
     const float horizontalSpeed = std::sqrt(player_.velocity.x * player_.velocity.x
                                              + player_.velocity.z * player_.velocity.z);
-    walkAmount_ = clampf(horizontalSpeed / 4.3f, 0.0f, 1.0f);
-    walkPhase_ += deltaTime * (5.0f + horizontalSpeed * 1.4f);
+    const float targetWalkAmount = clampf(horizontalSpeed / 4.3f, 0.0f, 1.0f);
+    walkAmount_ += (targetWalkAmount - walkAmount_)
+                 * std::min(1.0f, deltaTime * 10.0f);
+    walkPhase_ += deltaTime * (3.5f + horizontalSpeed * 1.6f) * (0.35f + walkAmount_);
     attackSwing_ = std::max(0.0f, attackSwing_ - deltaTime * 4.5f);
 
     const ChunkPos movedCenter =
@@ -582,6 +584,8 @@ PlayerRenderState Game::buildPlayerRenderState() const {
     state.walkPhase = walkPhase_;
     state.walkAmount = walkAmount_;
     state.attackSwing = attackSwing_;
+    state.verticalVelocity = player_.velocity.y;
+    state.time = elapsedTime_;
     state.onGround = player_.onGround;
     state.inWater = player_.inWater;
     return state;
