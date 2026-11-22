@@ -159,6 +159,9 @@ uniform float uFogEnd;
 uniform float uUseClip;
 uniform float uClipY;
 uniform float uShadowStrength;
+uniform float uTime;
+uniform float uWaterLevel;
+uniform float uCausticStrength;
 
 out vec4 FragColor;
 
@@ -172,6 +175,14 @@ const vec2 kPoissonDisk[16] = vec2[](
     vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
     vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790)
 );
+
+float causticPattern(vec2 p, float time) {
+    float value = sin(p.x * 2.1 + time * 1.3)
+                + sin(p.y * 2.7 - time * 1.1)
+                + sin((p.x + p.y) * 1.7 + time * 0.8);
+    value = max(value, 0.0) / 3.0;
+    return pow(value, 4.0);
+}
 
 float shadowFactorNear(vec4 shadowCoord, vec3 normal) {
     if (shadowCoord.w <= 0.0) {
@@ -246,6 +257,14 @@ void main() {
     vec3 ambient = mix(uAmbientGround, uAmbientSky, normal.y * 0.5 + 0.5);
     vec3 light = ambient + uSunColor * sun * shadow;
     vec3 color = texel.rgb * vColor.rgb * light;
+
+    if (vWorldPos.y < uWaterLevel - 0.05) {
+        float caustic = causticPattern(vWorldPos.xz, uTime) * uCausticStrength;
+        color += uSunColor * caustic * sun * shadow * max(normal.y, 0.0);
+        float depth = clamp((uWaterLevel - vWorldPos.y) / 18.0, 0.0, 1.0);
+        color = mix(color, color * vec3(0.55, 0.82, 1.0), depth * 0.35);
+    }
+
     float fog = clamp((distanceToCamera - uFogStart) / max(0.001, uFogEnd - uFogStart), 0.0, 1.0);
     color = mix(color, uFogColor, fog);
     FragColor = vec4(color, alpha);
@@ -1123,6 +1142,12 @@ void WorldRenderer::renderShadowMap(const Vec3& focus, const Vec3& sunDirection,
     }
 }
 
+void WorldRenderer::setWaterState(float waterLevel, float time, bool underwater) {
+    waterLevel_ = waterLevel;
+    time_ = time;
+    underwater_ = underwater;
+}
+
 void WorldRenderer::setWorldUniforms(const Mat4& viewProjection, const Vec3& cameraPosition,
                                      const Environment& environment, float fogStart,
                                      float fogEnd, bool useClip, float clipY) {
@@ -1142,6 +1167,9 @@ void WorldRenderer::setWorldUniforms(const Mat4& viewProjection, const Vec3& cam
     shader_.setFloat("uShadowStrength", 0.82f);
     shader_.setFloat("uShadowNormalOffsetNear", 0.012f);
     shader_.setFloat("uShadowNormalOffsetFar", 0.06f);
+    shader_.setFloat("uTime", time_);
+    shader_.setFloat("uWaterLevel", waterLevel_);
+    shader_.setFloat("uCausticStrength", 0.38f);
     shader_.setInt("uAtlas", 0);
     shader_.setInt("uShadowMapNear", 2);
     shader_.setInt("uShadowMapFar", 1);
@@ -1277,11 +1305,16 @@ void WorldRenderer::drawTransparent(const Mat4& viewProjection, const Vec3& came
     gl::ActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, shadowTextureNear_);
 
+    const bool belowWater = cameraPosition.y < waterLevel_ - 0.05f;
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-    glFrontFace(GL_CCW);
+    if (belowWater) {
+        glDisable(GL_CULL_FACE);
+    } else {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        glFrontFace(GL_CCW);
+    }
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -1296,6 +1329,11 @@ void WorldRenderer::drawTransparent(const Mat4& viewProjection, const Vec3& came
 
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
+    if (belowWater) {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        glFrontFace(GL_CCW);
+    }
     gl::BindVertexArray(0);
     gl::UseProgram(0);
 }
@@ -1344,11 +1382,16 @@ void WorldRenderer::drawWater(const Mat4& viewProjection, const Vec3& cameraPosi
     gl::ActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, reflectionTexture);
 
+    const bool belowWater = underwater_;
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-    glFrontFace(GL_CCW);
+    if (belowWater) {
+        glDisable(GL_CULL_FACE);
+    } else {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        glFrontFace(GL_CCW);
+    }
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -1364,6 +1407,11 @@ void WorldRenderer::drawWater(const Mat4& viewProjection, const Vec3& cameraPosi
 
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
+    if (belowWater) {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        glFrontFace(GL_CCW);
+    }
     gl::BindVertexArray(0);
     gl::UseProgram(0);
 }

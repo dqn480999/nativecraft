@@ -82,7 +82,7 @@ void Player::spawn(const World& world, const BlockRegistry& registry) {
     };
 
     auto trySpawn = [&](bool requireGrass, int minimumGround) {
-        for (int radius = 0; radius < 96; ++radius) {
+        for (int radius = 0; radius < 110; ++radius) {
             for (int dz = -radius; dz <= radius; ++dz) {
                 for (int dx = -radius; dx <= radius; ++dx) {
                     if (std::max(std::abs(dx), std::abs(dz)) != radius) {
@@ -149,7 +149,15 @@ void Player::update(const World& world, const BlockRegistry& registry, const Pla
         wish = normalize(wish);
     }
 
+    const int feetX = static_cast<int>(std::floor(position.x));
+    const int feetZ = static_cast<int>(std::floor(position.z));
+    const int feetY = static_cast<int>(std::floor(position.y + 0.1f));
+    const int chestY = static_cast<int>(std::floor(position.y + kHeight * 0.5f));
+    inWater = registry.isLiquid(world.get(feetX, feetY, feetZ))
+           || registry.isLiquid(world.get(feetX, chestY, feetZ));
+
     if (flying) {
+        inWater = false;
         const float speed = input.boost ? 26.0f : 12.0f;
         velocity.x = wish.x * speed;
         velocity.z = wish.z * speed;
@@ -161,20 +169,32 @@ void Player::update(const World& world, const BlockRegistry& registry, const Pla
         return;
     }
 
-    const float targetSpeed = input.boost ? 6.8f : 4.3f;
+    const float targetSpeed = inWater ? (input.boost ? 4.2f : 3.0f)
+                                      : (input.boost ? 6.8f : 4.3f);
     const float targetX = wish.x * targetSpeed;
     const float targetZ = wish.z * targetSpeed;
-    const float acceleration = 1.0f - std::exp(-14.0f * dt);
+    const float acceleration = 1.0f - std::exp((inWater ? -8.0f : -14.0f) * dt);
     velocity.x = approach(velocity.x, targetX, acceleration);
     velocity.z = approach(velocity.z, targetZ, acceleration);
 
-    if (input.jump && onGround) {
-        velocity.y = 8.6f;
-        onGround = false;
+    if (inWater) {
+        if (input.jump) {
+            velocity.y += 22.0f * dt;
+        }
+        if (input.descend) {
+            velocity.y -= 18.0f * dt;
+        }
+        velocity.y -= 8.0f * dt;
+        velocity.y *= std::exp(-2.2f * dt);
+        velocity.y = clampf(velocity.y, -4.0f, 5.0f);
+    } else {
+        if (input.jump && onGround) {
+            velocity.y = 8.6f;
+            onGround = false;
+        }
+        velocity.y -= 28.0f * dt;
+        velocity.y = std::max(velocity.y, -60.0f);
     }
-
-    velocity.y -= 28.0f * dt;
-    velocity.y = std::max(velocity.y, -60.0f);
 
     onGround = false;
 

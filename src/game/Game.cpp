@@ -510,8 +510,42 @@ void Game::render() {
     }
 
     const float viewDistance = static_cast<float>(options_.renderDistance * World::kChunkSize);
-    const float fogStart = viewDistance * 0.42f;
-    const float fogEnd = viewDistance * 0.92f;
+    const float reflectionFogStart = viewDistance * 0.42f;
+    const float reflectionFogEnd = viewDistance * 0.92f;
+
+    const Vec3 eye = player_.eye();
+    const int eyeX = static_cast<int>(std::floor(eye.x));
+    const int eyeY = static_cast<int>(std::floor(eye.y));
+    const int eyeZ = static_cast<int>(std::floor(eye.z));
+    const int eyeBlock = world_->get(eyeX, eyeY, eyeZ);
+    underwater_ = blocks_.isLiquid(eyeBlock);
+    underwaterLava_ = underwater_ && blocks_.def(eyeBlock).name == "lava";
+
+    Environment renderEnvironment = environment_;
+    float fogStart = reflectionFogStart;
+    float fogEnd = reflectionFogEnd;
+    if (underwater_) {
+        if (underwaterLava_) {
+            renderEnvironment.fogColor = {0.30f, 0.08f, 0.02f};
+            renderEnvironment.skyHorizon = {0.24f, 0.06f, 0.01f};
+            renderEnvironment.skyZenith = {0.10f, 0.02f, 0.01f};
+            renderEnvironment.ambientSky = {0.30f, 0.10f, 0.03f};
+            renderEnvironment.ambientGround = {0.08f, 0.02f, 0.01f};
+            renderEnvironment.sunColor = environment_.sunColor * 0.2f;
+            fogStart = 1.0f;
+            fogEnd = 10.0f;
+        } else {
+            renderEnvironment.fogColor = {0.035f, 0.22f, 0.32f};
+            renderEnvironment.skyHorizon = {0.05f, 0.30f, 0.45f};
+            renderEnvironment.skyZenith = {0.02f, 0.14f, 0.25f};
+            renderEnvironment.ambientSky = {0.12f, 0.32f, 0.42f};
+            renderEnvironment.ambientGround = {0.02f, 0.08f, 0.10f};
+            renderEnvironment.sunColor = environment_.sunColor * 0.55f;
+            fogStart = 2.0f;
+            fogEnd = 42.0f;
+        }
+    }
+    worldRenderer_.setWaterState(waterLevel_, elapsedTime_, underwater_);
 
     const int reflectionWidth = std::max(1, width);
     const int reflectionHeight = std::max(1, height);
@@ -527,7 +561,6 @@ void Game::render() {
     worldRenderer_.renderShadowMap(player_.position, environment_.sunDirection, elapsedTime_,
                                   windDirection_, windStrength_, player_.position);
 
-    const Vec3 eye = player_.eye();
     const Vec3 reflectedEye{eye.x, 2.0f * waterLevel_ - eye.y, eye.z};
     const Vec3 forward = player_.forward();
     const Vec3 reflectedForward{forward.x, -forward.y, forward.z};
@@ -547,14 +580,14 @@ void Game::render() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         sky_.render(reflectionViewProjection.inverse(), reflectedEye, environment_,
                     elapsedTime_);
-        worldRenderer_.drawOpaque(reflectionViewProjection, reflectedEye, environment_, fogStart,
-                                  fogEnd, true, waterLevel_, true);
+        worldRenderer_.drawOpaque(reflectionViewProjection, reflectedEye, environment_,
+                                  reflectionFogStart, reflectionFogEnd, true, waterLevel_, true);
         reflection_.unbind();
     }
 
     glViewport(0, 0, width, height);
-    glClearColor(environment_.fogColor.x, environment_.fogColor.y, environment_.fogColor.z,
-                 1.0f);
+    glClearColor(renderEnvironment.fogColor.x, renderEnvironment.fogColor.y,
+                 renderEnvironment.fogColor.z, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
@@ -562,13 +595,13 @@ void Game::render() {
     const Mat4 view = player_.viewMatrix();
     const Mat4 viewProjection = projection * view;
 
-    sky_.render(viewProjection.inverse(), eye, environment_, elapsedTime_);
-    worldRenderer_.drawOpaque(viewProjection, eye, environment_, fogStart, fogEnd, false, 0.0f,
-                              false);
-    worldRenderer_.drawGrass(viewProjection, eye, environment_, fogStart, fogEnd, elapsedTime_,
-                             player_.position, windDirection_, windStrength_);
-    worldRenderer_.drawTransparent(viewProjection, eye, environment_, fogStart, fogEnd);
-    worldRenderer_.drawWater(viewProjection, eye, environment_, fogStart, fogEnd,
+    sky_.render(viewProjection.inverse(), eye, renderEnvironment, elapsedTime_);
+    worldRenderer_.drawOpaque(viewProjection, eye, renderEnvironment, fogStart, fogEnd, false,
+                              0.0f, false);
+    worldRenderer_.drawGrass(viewProjection, eye, renderEnvironment, fogStart, fogEnd,
+                             elapsedTime_, player_.position, windDirection_, windStrength_);
+    worldRenderer_.drawTransparent(viewProjection, eye, renderEnvironment, fogStart, fogEnd);
+    worldRenderer_.drawWater(viewProjection, eye, renderEnvironment, fogStart, fogEnd,
                              reflection_.colorTexture(), reflectionViewProjection,
                              elapsedTime_, waterLevel_);
     drawHud();
@@ -580,6 +613,12 @@ void Game::drawHud() {
     SDL_GetWindowSize(window_, &width, &height);
 
     hud_.begin(width, height);
+    if (underwater_) {
+        const Vec3 tint = underwaterLava_ ? Vec3{0.55f, 0.20f, 0.05f}
+                                          : Vec3{0.02f, 0.20f, 0.30f};
+        hud_.drawRect(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), tint,
+                      underwaterLava_ ? 0.28f : 0.12f);
+    }
     hud_.drawCrosshair();
 
     const auto shadowText = [this](float x, float y, const std::string& text, float scale,

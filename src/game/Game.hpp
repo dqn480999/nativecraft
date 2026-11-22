@@ -82,6 +82,8 @@ private:
     bool timePaused_ = false;
     Vec3 windDirection_{0.8f, 0.0f, 0.6f};
     float windStrength_ = 0.24f;
+    bool underwater_ = false;
+    bool underwaterLava_ = false;
     ChunkPos lastStreamCenter_{};
     bool hasStreamCenter_ = false;
 

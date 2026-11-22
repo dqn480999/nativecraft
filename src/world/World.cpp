@@ -289,8 +289,12 @@ void World::generateChunkBlocks(const ChunkPos& pos,
             const float detail = fbm(static_cast<float>(worldX) * 0.06f,
                                      static_cast<float>(worldZ) * 0.06f,
                                      seed ^ 0xA5A5A5A5ull, 3);
-            int height = 50 + static_cast<int>(base * 20.0f)
-                       + static_cast<int>(detail * 6.0f);
+            const float continent = fbm(static_cast<float>(worldX) * 0.0038f,
+                                        static_cast<float>(worldZ) * 0.0038f,
+                                        seed ^ 0xC0A57ull, 3);
+            int height = 48 + static_cast<int>(base * 22.0f)
+                       + static_cast<int>(detail * 6.0f)
+                       + static_cast<int>((continent - 0.5f) * 28.0f);
             height = std::clamp(height, 8, kHeight - 12);
             heights[localZ * kChunkSize + localX] = height;
 

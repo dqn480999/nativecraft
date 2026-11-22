@@ -35,6 +35,7 @@ public:
     float pitch = -12.0f;
     bool flying = false;
     bool onGround = false;
+    bool inWater = false;
 
     static constexpr float kWidth = 0.6f;
     static constexpr float kHeight = 1.8f;

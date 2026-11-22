@@ -12,6 +12,8 @@ Textures, block models, blockstates, the bitmap font, language files, and sounds
 
 ![Water reflections and waves](docs/screenshots/water.png)
 
+![Underwater caustics and color](docs/screenshots/underwater.png)
+
 ![Sun](docs/screenshots/sun.png)
 
 ![Night](docs/screenshots/night.png)
@@ -77,8 +79,8 @@ Useful options:
 |---|---|
 | Mouse | Look |
 | W/A/S/D | Move |
-| Space | Jump or fly up |
-| Ctrl | Fly down |
+| Space | Jump, swim up, or fly up |
+| Ctrl | Swim down or fly down |
 | Shift | Sprint |
 | F | Toggle flight |
 | M | Toggle mouse capture |
@@ -101,6 +103,8 @@ Useful options:
 - Breakable grass with a raycast hitbox: aim and left-click to remove it, or right-click to replace it with a block.
 - Procedural moving clouds, sun, moon, and stars.
 - Planar water reflections, animated waves, ripples, Fresnel reflections, and specular highlights.
+- Swimming with buoyancy, underwater fog, blue-green underwater color, caustics, and sun glints through the water surface.
+- Deeper procedural water basins for diving.
 - Frustum culling for shadow, reflection, opaque, grass, transparent, and water passes.
 - Grass LOD: detailed grass meshes are limited to a configurable radius.
 
@@ -118,6 +122,7 @@ Useful options:
 - Animated textures use the first frame.
 - No weather, volumetric lighting, or cloud shadows.
 - Tall grass has no collision. Its shadows are limited to the near shadow cascade (22 blocks).
+- No drowning, oxygen meter, water flow, or lava damage.
 - Chunk generation and disk loading are multithreaded; mesh building and OpenGL uploads remain on the render thread and are budgeted per frame.
 - The software ray tracing test samples the original block textures at 1280x720 with nearest filtering. It still uses voxel geometry and does not render individual grass blades.
 - Grass LOD changes can pop when chunks cross the grass radius.

@@ -73,8 +73,8 @@ The grass block uses a composited side texture built from `grass_side` and a gre
 ## World generation
 
 - Chunks are 16x128x16.
-- Terrain height uses two fBm value noise bands. Sea level is 56.
-- Columns below sea level are filled with water and topped with sand. Higher ground is grass or dirt.
+- Terrain height uses two fBm value noise bands plus a continental noise band. Sea level is 56.
+- Low columns are deepened into basins, then filled with water and topped with sand. Higher ground is grass or dirt.
 - Stone, dirt, grass, coal ore, iron ore, and gravel are placed by depth and position hash.
 - Trees are placed deterministically from a position hash and are restricted to the chunk interior so they never cross chunk boundaries.
 - Grass types are chosen from a low-frequency biome noise plus a per-column hash. The grass density is two thirds of eligible grass columns.
@@ -94,6 +94,15 @@ Each frame runs these passes:
 8. **HUD.** Crosshair, hotbar icons, bitmap text, and status lines.
 
 All world passes use frustum culling against cached chunk bounds.
+
+## Swimming and underwater rendering
+
+- The player detects liquid at the feet and chest. In water, gravity is reduced, vertical drag is applied, Space swims up, and Ctrl swims down.
+- When the eye is inside a liquid, the render environment switches to a blue-green underwater fog and ambient palette.
+- Underwater terrain receives animated caustic light and a depth-based blue-green tint.
+- The water shader brightens the surface seen from below and adds a sun-through-water glow and surface caustics.
+- Water is rendered double-sided when the camera is below the water level so the underside of the surface is visible.
+- A translucent full-screen tint is drawn in the HUD while submerged.
 
 ## Lighting model
 

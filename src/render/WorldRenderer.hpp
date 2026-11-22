@@ -31,6 +31,7 @@ public:
     void renderShadowMap(const Vec3& focus, const Vec3& sunDirection, float time,
                          const Vec3& windDirection, float windStrength,
                          const Vec3& playerPosition);
+    void setWaterState(float waterLevel, float time, bool underwater);
 
     void drawOpaque(const Mat4& viewProjection, const Vec3& cameraPosition,
                     const Environment& environment, float fogStart, float fogEnd,
@@ -105,6 +106,9 @@ private:
     TextureArray* textures_ = nullptr;
     std::unordered_map<ChunkPos, ChunkMesh, ChunkPosHash> meshes_;
     int triangleCount_ = 0;
+    float waterLevel_ = 56.0f;
+    float time_ = 0.0f;
+    bool underwater_ = false;
 
     GLuint shadowFbo_ = 0;
     GLuint shadowTexture_ = 0;
