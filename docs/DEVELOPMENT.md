@@ -65,7 +65,7 @@ Each frame runs these passes:
 2. **Reflection.** The scene is rendered from a camera mirrored across the water plane into an offscreen color/depth target. The sky and opaque geometry are included. Geometry below the water plane is clipped.
 3. **Sky.** A fullscreen triangle computes sky gradient, sun disk, moon, stars, and moving clouds from the inverse view-projection matrix.
 4. **Opaque world.** Block textures are lit by sun color, ambient sky/ground, and the shadow map. Glass and ice use a separate transparent pass.
-5. **Water.** Water vertices are displaced by large waves and small ripples. The fragment shader blends deep water color with the planar reflection, applies Fresnel, sun path, specular highlights, foam, and fog.
+5. **Water.** Water vertices are displaced by large waves and small ripples. The fragment shader blends deep water color with the planar reflection, applies Fresnel, blurred reflections, sun path, specular highlights, and fog.
 6. **HUD.** Crosshair, hotbar icons, bitmap text, and status lines.
 
 ## Lighting model

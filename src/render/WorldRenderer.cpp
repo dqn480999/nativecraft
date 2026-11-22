@@ -161,21 +161,21 @@ out float vWaveHeight;
 void main() {
     vec3 position = aPos;
     float mask = step(uWaterLevel - 0.01, aPos.y);
-    float phase1 = aPos.x * 0.62 + uTime * 0.95;
-    float phase2 = aPos.z * 0.71 + uTime * 0.82;
-    float phase3 = (aPos.x + aPos.z) * 0.33 + uTime * 0.55;
+    float phase1 = aPos.x * 0.45 + uTime * 0.7;
+    float phase2 = aPos.z * 0.52 + uTime * 0.6;
+    float phase3 = (aPos.x + aPos.z) * 0.22 + uTime * 0.4;
     float height = (sin(phase1) * 0.5 + sin(phase2) * 0.5) * 0.7 + sin(phase3) * 0.3;
-    float ripplePhaseX = aPos.x * 2.6 + uTime * 2.0;
-    float ripplePhaseZ = aPos.z * 2.2 - uTime * 1.5;
+    float ripplePhaseX = aPos.x * 1.6 + uTime * 1.1;
+    float ripplePhaseZ = aPos.z * 1.4 - uTime * 0.9;
     float ripple = sin(ripplePhaseX) * sin(ripplePhaseZ);
-    float waveHeight = (height * uWaveAmplitude + ripple * 0.05) * mask;
+    float waveHeight = (height * uWaveAmplitude + ripple * 0.018) * mask;
     position.y += waveHeight;
-    float dhdx = (cos(phase1) * 0.62 * 0.5 * 0.7 + cos(phase3) * 0.33 * 0.3)
+    float dhdx = (cos(phase1) * 0.45 * 0.5 * 0.7 + cos(phase3) * 0.22 * 0.3)
                * uWaveAmplitude * mask;
-    float dhdz = (cos(phase2) * 0.71 * 0.5 * 0.7 + cos(phase3) * 0.33 * 0.3)
+    float dhdz = (cos(phase2) * 0.52 * 0.5 * 0.7 + cos(phase3) * 0.22 * 0.3)
                * uWaveAmplitude * mask;
-    dhdx += cos(ripplePhaseX) * 2.6 * sin(ripplePhaseZ) * 0.05 * mask;
-    dhdz += sin(ripplePhaseX) * cos(ripplePhaseZ) * 2.2 * 0.05 * mask;
+    dhdx += cos(ripplePhaseX) * 1.6 * sin(ripplePhaseZ) * 0.018 * mask;
+    dhdz += sin(ripplePhaseX) * cos(ripplePhaseZ) * 1.4 * 0.018 * mask;
     vec3 normal = mask > 0.5 ? normalize(vec3(-dhdx, 1.0, -dhdz)) : normalize(aNormal);
     vWorldPos = position;
     vNormal = normal;
@@ -209,38 +209,48 @@ uniform float uDayFactor;
 out vec4 FragColor;
 
 void main() {
-    vec2 flow = vec2(uTime * 0.012, uTime * 0.008);
     vec3 normal = normalize(vNormal);
-    normal.x += sin(vWorldPos.x * 3.0 + uTime * 2.2) * 0.055;
-    normal.z += cos(vWorldPos.z * 2.8 - uTime * 1.8) * 0.055;
+    normal.x += sin(vWorldPos.x * 0.65 + uTime * 0.7) * 0.018;
+    normal.z += cos(vWorldPos.z * 0.72 - uTime * 0.6) * 0.018;
     normal = normalize(normal);
 
+    vec2 flow = vec2(uTime * 0.006, uTime * 0.004);
     vec3 texel = texture(uAtlas, vec3(vUV.xy + flow, vUV.z)).rgb;
-    vec3 deep = texel * vColor.rgb * (0.62 + 0.3 * uDayFactor);
+    vec3 waterBody = vec3(0.018, 0.075, 0.095) + texel * 0.08 + vColor.rgb * 0.06;
+    waterBody *= 0.55 + 0.45 * uDayFactor;
 
     vec4 clip = uReflectionVP * vec4(vWorldPos, 1.0);
     vec2 reflectionUv = clip.xy / clip.w * 0.5 + 0.5;
-    reflectionUv += normal.xz * 0.042;
+    reflectionUv += normal.xz * 0.018;
     reflectionUv = clamp(reflectionUv, vec2(0.002), vec2(0.998));
-    vec3 reflection = texture(uReflectionTex, reflectionUv).rgb;
-
-    vec3 viewDir = normalize(uCameraPos - vWorldPos);
-    float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
-    vec3 color = mix(deep, reflection, clamp(0.42 + 0.58 * fresnel, 0.0, 0.92));
-
-    vec3 halfVector = normalize(uSunDir + viewDir);
-    float specular = pow(max(dot(normal, halfVector), 0.0), 220.0);
-    color += uSunColor * specular * 2.2;
-    vec3 reflectedSun = reflect(-uSunDir, normal);
-    float sunPath = pow(max(dot(reflectedSun, viewDir), 0.0), 12.0);
-    color += uSunColor * sunPath * 0.16;
-    float foam = smoothstep(0.14, 0.26, vWaveHeight) * (0.22 + 0.22 * uDayFactor);
-    color = mix(color, vec3(0.92, 0.97, 1.0), foam);
 
     float distanceToCamera = length(vWorldPos - uCameraPos);
+    vec2 texelSize = 1.0 / vec2(textureSize(uReflectionTex, 0));
+    float blur = mix(0.6, 3.0, clamp(distanceToCamera / 140.0, 0.0, 1.0));
+    vec2 offset = texelSize * blur;
+    vec3 reflection = texture(uReflectionTex, reflectionUv).rgb * 0.4;
+    reflection += texture(uReflectionTex, reflectionUv + vec2(offset.x, 0.0)).rgb * 0.15;
+    reflection += texture(uReflectionTex, reflectionUv - vec2(offset.x, 0.0)).rgb * 0.15;
+    reflection += texture(uReflectionTex, reflectionUv + vec2(0.0, offset.y)).rgb * 0.15;
+    reflection += texture(uReflectionTex, reflectionUv - vec2(0.0, offset.y)).rgb * 0.15;
+    reflection = mix(reflection, reflection * vec3(0.82, 0.92, 0.96), 0.25);
+
+    vec3 viewDir = normalize(uCameraPos - vWorldPos);
+    float fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(normal, viewDir), 0.0), 5.0);
+    vec3 color = mix(waterBody, reflection, clamp(fresnel + 0.06, 0.0, 1.0));
+
+    vec3 halfVector = normalize(uSunDir + viewDir);
+    float specular = pow(max(dot(normal, halfVector), 0.0), 180.0);
+    color += uSunColor * specular * 1.4;
+    vec3 reflectedSun = reflect(-uSunDir, normal);
+    float sunPath = pow(max(dot(reflectedSun, viewDir), 0.0), 24.0);
+    color += uSunColor * sunPath * 0.08;
+    float crest = smoothstep(0.06, 0.14, vWaveHeight) * 0.03;
+    color += vec3(0.4, 0.55, 0.6) * crest * uDayFactor;
+
     float fog = clamp((distanceToCamera - uFogStart) / max(0.001, uFogEnd - uFogStart), 0.0, 1.0);
     color = mix(color, uFogColor, fog);
-    FragColor = vec4(color, clamp(0.72 + fresnel * 0.2, 0.0, 0.92));
+    FragColor = vec4(color, mix(0.82, 0.95, fresnel));
 }
 )";
 
@@ -696,7 +706,7 @@ void WorldRenderer::drawWater(const Mat4& viewProjection, const Vec3& cameraPosi
     waterShader_.setFloat("uFogEnd", fogEnd);
     waterShader_.setFloat("uTime", time);
     waterShader_.setFloat("uWaterLevel", waterLevel);
-    waterShader_.setFloat("uWaveAmplitude", 0.32f);
+    waterShader_.setFloat("uWaveAmplitude", 0.16f);
     waterShader_.setFloat("uDayFactor", environment.dayFactor);
     waterShader_.setInt("uAtlas", 0);
     waterShader_.setInt("uReflectionTex", 1);

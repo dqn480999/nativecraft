@@ -449,7 +449,7 @@ bool BlockRegistry::addWaterOrLava(const std::string& name, Assets& assets,
     def.alpha = water ? 0.72f : 1.0f;
     if (water) {
         for (auto& tint : def.tints) {
-            tint = {0.28f, 0.48f, 1.0f};
+            tint = {0.16f, 0.34f, 0.38f};
         }
     }
 

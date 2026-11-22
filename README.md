@@ -75,7 +75,7 @@ assets/objects/
 - Procedural moving clouds with parallax on a cloud plane.
 - Stars and moon at night.
 - Planar water reflections rendered from a mirrored camera.
-- Animated water waves, ripples, foam, sun path, and specular highlights.
+- Animated water waves, ripples, Fresnel reflections, sun path, and specular highlights.
 - Sky, fog, ambient light, and sun color driven by the time of day.
 - Texture array for block textures, transparent pass for glass and ice.
 
