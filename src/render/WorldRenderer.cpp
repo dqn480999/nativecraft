@@ -109,14 +109,16 @@ layout(location = 3) in float aLayer;
 layout(location = 4) in vec4 aColor;
 
 uniform mat4 uViewProj;
-uniform mat4 uLightVP;
+uniform mat4 uLightVPNear;
+uniform mat4 uLightVPFar;
 uniform float uShadowNormalOffset;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec3 vUV;
 out vec4 vColor;
-out vec4 vShadowCoord;
+out vec4 vShadowCoordNear;
+out vec4 vShadowCoordFar;
 
 void main() {
     vec4 world = vec4(aPos, 1.0);
@@ -125,7 +127,9 @@ void main() {
     vNormal = aNormal;
     vUV = vec3(aUV, aLayer);
     vColor = aColor;
-    vShadowCoord = uLightVP * vec4(aPos + aNormal * uShadowNormalOffset, 1.0);
+    vec4 offsetPosition = vec4(aPos + aNormal * uShadowNormalOffset, 1.0);
+    vShadowCoordNear = uLightVPNear * offsetPosition;
+    vShadowCoordFar = uLightVPFar * offsetPosition;
 }
 )";
 
@@ -135,10 +139,13 @@ in vec3 vWorldPos;
 in vec3 vNormal;
 in vec3 vUV;
 in vec4 vColor;
-in vec4 vShadowCoord;
+in vec4 vShadowCoordNear;
+in vec4 vShadowCoordFar;
 
 uniform sampler2DArray uAtlas;
-uniform sampler2DShadow uShadowMap;
+uniform sampler2DShadow uShadowMapNear;
+uniform sampler2DShadow uShadowMapFar;
+uniform float uNearShadowDistance;
 uniform vec3 uCameraPos;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
@@ -153,7 +160,7 @@ uniform float uShadowStrength;
 
 out vec4 FragColor;
 
-float shadowFactor(vec4 shadowCoord, vec3 normal) {
+float shadowFactorNear(vec4 shadowCoord, vec3 normal) {
     if (shadowCoord.w <= 0.0) {
         return 1.0;
     }
@@ -163,11 +170,32 @@ float shadowFactor(vec4 shadowCoord, vec3 normal) {
         return 1.0;
     }
     float bias = max(0.0008 * (1.0 - max(dot(normal, uSunDir), 0.0)), 0.0002);
-    vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
+    vec2 texel = 1.0 / vec2(textureSize(uShadowMapNear, 0));
     float sum = 0.0;
     for (int x = -1; x <= 1; ++x) {
         for (int y = -1; y <= 1; ++y) {
-            sum += texture(uShadowMap,
+            sum += texture(uShadowMapNear,
+                           vec3(projected.xy + vec2(x, y) * texel, projected.z - bias));
+        }
+    }
+    return sum / 9.0;
+}
+
+float shadowFactorFar(vec4 shadowCoord, vec3 normal) {
+    if (shadowCoord.w <= 0.0) {
+        return 1.0;
+    }
+    vec3 projected = shadowCoord.xyz / shadowCoord.w * 0.5 + 0.5;
+    if (projected.z > 1.0 || projected.z < 0.0 || projected.x < 0.0 || projected.x > 1.0
+        || projected.y < 0.0 || projected.y > 1.0) {
+        return 1.0;
+    }
+    float bias = max(0.0008 * (1.0 - max(dot(normal, uSunDir), 0.0)), 0.0002);
+    vec2 texel = 1.0 / vec2(textureSize(uShadowMapFar, 0));
+    float sum = 0.0;
+    for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            sum += texture(uShadowMapFar,
                            vec3(projected.xy + vec2(x, y) * texel, projected.z - bias));
         }
     }
@@ -185,11 +213,20 @@ void main() {
     }
     vec3 normal = normalize(vNormal);
     float sun = max(dot(normal, uSunDir), 0.0);
-    float shadow = mix(1.0, shadowFactor(vShadowCoord, normal), uShadowStrength);
+    float distanceToCamera = length(vWorldPos - uCameraPos);
+    float nearWeight = 1.0 - smoothstep(uNearShadowDistance - 4.0, uNearShadowDistance,
+                                        distanceToCamera);
+    float shadow = 0.0;
+    if (nearWeight > 0.0) {
+        shadow += nearWeight * shadowFactorNear(vShadowCoordNear, normal);
+    }
+    if (nearWeight < 1.0) {
+        shadow += (1.0 - nearWeight) * shadowFactorFar(vShadowCoordFar, normal);
+    }
+    shadow = mix(1.0, shadow, uShadowStrength);
     vec3 ambient = mix(uAmbientGround, uAmbientSky, normal.y * 0.5 + 0.5);
     vec3 light = ambient + uSunColor * sun * shadow;
     vec3 color = texel.rgb * vColor.rgb * light;
-    float distanceToCamera = length(vWorldPos - uCameraPos);
     float fog = clamp((distanceToCamera - uFogStart) / max(0.001, uFogEnd - uFogStart), 0.0, 1.0);
     color = mix(color, uFogColor, fog);
     FragColor = vec4(color, alpha);
@@ -281,6 +318,7 @@ uniform vec3 uFogColor;
 uniform float uFogStart;
 uniform float uFogEnd;
 uniform float uShadowStrength;
+uniform float uTime;
 
 out vec4 FragColor;
 
@@ -313,6 +351,14 @@ void main() {
     vec3 light = ambient * 0.85 + uSunColor * sun * shadow * 0.8;
     float blade = clamp(1.0 - vUV.y, 0.0, 1.0);
     vec3 color = vColor.rgb * light * mix(0.42, 1.05, blade);
+
+    vec3 viewDir = normalize(uCameraPos - vWorldPos);
+    vec3 halfVector = normalize(uSunDir + viewDir);
+    float sheen = pow(max(dot(normal, halfVector), 0.0), 24.0) * 0.12;
+    float glint = pow(max(0.0, sin(vWorldPos.x * 11.7 + uTime * 3.0)
+                              * sin(vWorldPos.z * 9.1 - uTime * 2.3)), 14.0);
+    color += uSunColor * (sheen + glint * 0.06) * shadow;
+
     float distanceToCamera = length(vWorldPos - uCameraPos);
     float fog = clamp((distanceToCamera - uFogStart) / max(0.001, uFogEnd - uFogStart), 0.0, 1.0);
     color = mix(color, uFogColor, fog);
@@ -449,6 +495,9 @@ bool WorldRenderer::init(TextureArray& textures, std::string* error) {
     if (!grassShader_.compile(kGrassVertexShader, kGrassFragmentShader, error)) {
         return false;
     }
+    if (!grassShadowShader_.compile(kGrassVertexShader, kShadowFragmentShader, error)) {
+        return false;
+    }
     if (!waterShader_.compile(kWaterVertexShader, kWaterFragmentShader, error)) {
         return false;
     }
@@ -457,35 +506,48 @@ bool WorldRenderer::init(TextureArray& textures, std::string* error) {
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
     if (maxTextureSize > 0) {
         shadowSize_ = std::min(shadowSize_, static_cast<int>(maxTextureSize));
+        shadowSizeNear_ = std::min(shadowSizeNear_, static_cast<int>(maxTextureSize));
     }
 
-    glGenTextures(1, &shadowTexture_);
-    glBindTexture(GL_TEXTURE_2D, shadowTexture_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadowSize_, shadowSize_, 0,
-                 GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
-    const GLfloat border[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
+    const auto createShadowTarget = [error](GLuint& fbo, GLuint& texture, int size,
+                                            const char* name) {
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, size, size, 0,
+                     GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+        const GLfloat border[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
 
-    gl::GenFramebuffers(1, &shadowFbo_);
-    gl::BindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
-    gl::FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowTexture_,
-                             0);
-    glDrawBuffer(GL_NONE);
-    glReadBuffer(GL_NONE);
-    const GLenum status = gl::CheckFramebufferStatus(GL_FRAMEBUFFER);
-    gl::BindFramebuffer(GL_FRAMEBUFFER, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
+        gl::GenFramebuffers(1, &fbo);
+        gl::BindFramebuffer(GL_FRAMEBUFFER, fbo);
+        gl::FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, texture,
+                                 0);
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        const GLenum status = gl::CheckFramebufferStatus(GL_FRAMEBUFFER);
+        gl::BindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, 0);
 
-    if (status != GL_FRAMEBUFFER_COMPLETE) {
-        if (error) {
-            *error = "shadow framebuffer incomplete: " + std::to_string(status);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            if (error) {
+                *error = std::string(name) + " shadow framebuffer incomplete: "
+                       + std::to_string(status);
+            }
+            return false;
         }
+        return true;
+    };
+
+    if (!createShadowTarget(shadowFbo_, shadowTexture_, shadowSize_, "far")) {
+        return false;
+    }
+    if (!createShadowTarget(shadowFboNear_, shadowTextureNear_, shadowSizeNear_, "near")) {
         return false;
     }
 
@@ -524,10 +586,19 @@ void WorldRenderer::destroy() {
         glDeleteTextures(1, &shadowTexture_);
         shadowTexture_ = 0;
     }
+    if (shadowFboNear_) {
+        gl::DeleteFramebuffers(1, &shadowFboNear_);
+        shadowFboNear_ = 0;
+    }
+    if (shadowTextureNear_) {
+        glDeleteTextures(1, &shadowTextureNear_);
+        shadowTextureNear_ = 0;
+    }
 
     shader_.destroy();
     shadowShader_.destroy();
     grassShader_.destroy();
+    grassShadowShader_.destroy();
     waterShader_.destroy();
     triangleCount_ = 0;
     shadowMapValid_ = false;
@@ -588,6 +659,7 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
     triangleCount_ -= mesh.triangles;
     mesh.grassEnabled = includeGrass;
     shadowMapValid_ = false;
+    shadowMapNearValid_ = false;
 
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> opaqueIndices;
@@ -799,6 +871,8 @@ void WorldRenderer::syncMeshes(const World& world, const BlockRegistry& registry
             triangleCount_ -= it->second.triangles;
             destroyMesh(it->second);
             it = meshes_.erase(it);
+            shadowMapValid_ = false;
+            shadowMapNearValid_ = false;
         } else {
             ++it;
         }
@@ -902,29 +976,15 @@ void WorldRenderer::rebuildAround(const World& world, const BlockRegistry& regis
     }
 }
 
-void WorldRenderer::renderShadowMap(const Vec3& focus, const Vec3& sunDirection) {
-    if (!shadowFbo_ || meshes_.empty()) {
-        return;
-    }
-    if (shadowMapValid_ && dot(sunDirection, lastShadowSun_) > 0.99997f
-        && lengthSquared(focus - lastShadowFocus_) < 36.0f) {
-        return;
-    }
-
-    const Vec3 center{focus.x, 64.0f, focus.z};
-    const Vec3 up = std::abs(sunDirection.y) > 0.98f ? Vec3{1.0f, 0.0f, 0.0f}
-                                                     : Vec3{0.0f, 1.0f, 0.0f};
-    const Mat4 lightView = Mat4::lookAt(center + sunDirection * 140.0f, center, up);
-    const float extent = 90.0f;
-    const Mat4 lightProjection =
-        Mat4::orthographic(-extent, extent, -extent, extent, 1.0f, 320.0f);
-    lightViewProjection_ = lightProjection * lightView;
-
+void WorldRenderer::renderShadowTarget(GLuint framebuffer, int size,
+                                       const Mat4& lightViewProjection, bool includeGrass,
+                                       float time, const Vec3& windDirection,
+                                       float windStrength, const Vec3& playerPosition) {
     GLint viewport[4] = {0, 0, 1, 1};
     glGetIntegerv(GL_VIEWPORT, viewport);
 
-    gl::BindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
-    glViewport(0, 0, shadowSize_, shadowSize_);
+    gl::BindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glViewport(0, 0, size, size);
     glClear(GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
@@ -935,9 +995,9 @@ void WorldRenderer::renderShadowMap(const Vec3& focus, const Vec3& sunDirection)
     glPolygonOffset(2.0f, 4.0f);
 
     shadowShader_.use();
-    shadowShader_.setMat4("uLightVP", lightViewProjection_);
+    shadowShader_.setMat4("uLightVP", lightViewProjection);
 
-    const Frustum lightFrustum = extractFrustum(lightViewProjection_);
+    const Frustum lightFrustum = extractFrustum(lightViewProjection);
     for (const auto& [pos, mesh] : meshes_) {
         (void)pos;
         if (mesh.opaqueIndices == 0 || !intersectsFrustum(lightFrustum, mesh.bounds)) {
@@ -947,9 +1007,33 @@ void WorldRenderer::renderShadowMap(const Vec3& focus, const Vec3& sunDirection)
         glDrawElements(GL_TRIANGLES, mesh.opaqueIndices, GL_UNSIGNED_INT, nullptr);
     }
 
-    shadowMapValid_ = true;
-    lastShadowSun_ = sunDirection;
-    lastShadowFocus_ = focus;
+    if (includeGrass) {
+        grassShadowShader_.use();
+        grassShadowShader_.setMat4("uViewProj", lightViewProjection);
+        grassShadowShader_.setMat4("uLightVP", lightViewProjection);
+        grassShadowShader_.setFloat("uShadowNormalOffset", 0.03f);
+        grassShadowShader_.setFloat("uTime", time);
+        grassShadowShader_.setVec3("uWindDir", windDirection);
+        grassShadowShader_.setFloat("uWindStrength", windStrength);
+        grassShadowShader_.setVec3("uPlayerPos", playerPosition);
+        grassShadowShader_.setFloat("uPlayerRadius", 1.7f);
+
+        glDisable(GL_CULL_FACE);
+        for (const auto& [pos, mesh] : meshes_) {
+            (void)pos;
+            if (mesh.grassIndices == 0 || !intersectsFrustum(lightFrustum, mesh.bounds)) {
+                continue;
+            }
+            gl::BindVertexArray(mesh.vao);
+            const auto offset =
+                static_cast<GLsizeiptr>(mesh.opaqueIndices * sizeof(std::uint32_t));
+            glDrawElements(GL_TRIANGLES, mesh.grassIndices, GL_UNSIGNED_INT,
+                           reinterpret_cast<const void*>(offset));
+        }
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        glFrontFace(GL_CCW);
+    }
 
     glDisable(GL_POLYGON_OFFSET_FILL);
     gl::BindVertexArray(0);
@@ -958,11 +1042,58 @@ void WorldRenderer::renderShadowMap(const Vec3& focus, const Vec3& sunDirection)
     glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 }
 
+void WorldRenderer::renderShadowMap(const Vec3& focus, const Vec3& sunDirection, float time,
+                                    const Vec3& windDirection, float windStrength,
+                                    const Vec3& playerPosition) {
+    if (!shadowFbo_ || !shadowFboNear_ || meshes_.empty()) {
+        return;
+    }
+
+    const Vec3 up = std::abs(sunDirection.y) > 0.98f ? Vec3{1.0f, 0.0f, 0.0f}
+                                                     : Vec3{0.0f, 1.0f, 0.0f};
+
+    const bool farDirty = !shadowMapValid_
+                       || dot(sunDirection, lastShadowSun_) <= 0.99997f
+                       || lengthSquared(focus - lastShadowFocus_) >= 36.0f;
+    if (farDirty) {
+        const Vec3 center{focus.x, 64.0f, focus.z};
+        const Mat4 lightView = Mat4::lookAt(center + sunDirection * 140.0f, center, up);
+        const float extent = 90.0f;
+        lightViewProjection_ = Mat4::orthographic(-extent, extent, -extent, extent, 1.0f,
+                                                  320.0f)
+                             * lightView;
+        renderShadowTarget(shadowFbo_, shadowSize_, lightViewProjection_, false, time,
+                           windDirection, windStrength, playerPosition);
+        lastShadowSun_ = sunDirection;
+        lastShadowFocus_ = focus;
+        shadowMapValid_ = true;
+    }
+
+    const bool nearDirty = !shadowMapNearValid_
+                        || dot(sunDirection, lastNearShadowSun_) <= 0.99997f
+                        || lengthSquared(focus - lastNearShadowFocus_) >= 4.0f
+                        || std::abs(time - lastNearShadowTime_) >= 0.1f;
+    if (nearDirty) {
+        const Vec3 center{focus.x, 64.0f, focus.z};
+        const Mat4 lightView = Mat4::lookAt(center + sunDirection * 140.0f, center, up);
+        const float extent = 22.0f;
+        lightViewProjectionNear_ =
+            Mat4::orthographic(-extent, extent, -extent, extent, 1.0f, 320.0f) * lightView;
+        renderShadowTarget(shadowFboNear_, shadowSizeNear_, lightViewProjectionNear_, true,
+                           time, windDirection, windStrength, playerPosition);
+        lastNearShadowSun_ = sunDirection;
+        lastNearShadowFocus_ = focus;
+        lastNearShadowTime_ = time;
+        shadowMapNearValid_ = true;
+    }
+}
+
 void WorldRenderer::setWorldUniforms(const Mat4& viewProjection, const Vec3& cameraPosition,
                                      const Environment& environment, float fogStart,
                                      float fogEnd, bool useClip, float clipY) {
     shader_.setMat4("uViewProj", viewProjection);
-    shader_.setMat4("uLightVP", lightViewProjection_);
+    shader_.setMat4("uLightVPNear", lightViewProjectionNear_);
+    shader_.setMat4("uLightVPFar", lightViewProjection_);
     shader_.setVec3("uCameraPos", cameraPosition);
     shader_.setVec3("uSunDir", environment.sunDirection);
     shader_.setVec3("uSunColor", environment.sunColor);
@@ -976,7 +1107,9 @@ void WorldRenderer::setWorldUniforms(const Mat4& viewProjection, const Vec3& cam
     shader_.setFloat("uShadowStrength", 0.82f);
     shader_.setFloat("uShadowNormalOffset", 0.03f);
     shader_.setInt("uAtlas", 0);
-    shader_.setInt("uShadowMap", 1);
+    shader_.setInt("uShadowMapNear", 2);
+    shader_.setInt("uShadowMapFar", 1);
+    shader_.setFloat("uNearShadowDistance", 22.0f);
 }
 
 void WorldRenderer::drawOpaque(const Mat4& viewProjection, const Vec3& cameraPosition,
@@ -994,6 +1127,8 @@ void WorldRenderer::drawOpaque(const Mat4& viewProjection, const Vec3& cameraPos
     glBindTexture(GL_TEXTURE_2D_ARRAY, textures_->id());
     gl::ActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, shadowTexture_);
+    gl::ActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, shadowTextureNear_);
 
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
@@ -1103,6 +1238,8 @@ void WorldRenderer::drawTransparent(const Mat4& viewProjection, const Vec3& came
     glBindTexture(GL_TEXTURE_2D_ARRAY, textures_->id());
     gl::ActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, shadowTexture_);
+    gl::ActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, shadowTextureNear_);
 
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);

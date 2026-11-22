@@ -28,7 +28,9 @@ public:
                       int chunkZ, bool includeGrass);
     void rebuildAround(const World& world, const BlockRegistry& registry, int x, int z);
 
-    void renderShadowMap(const Vec3& focus, const Vec3& sunDirection);
+    void renderShadowMap(const Vec3& focus, const Vec3& sunDirection, float time,
+                         const Vec3& windDirection, float windStrength,
+                         const Vec3& playerPosition);
 
     void drawOpaque(const Mat4& viewProjection, const Vec3& cameraPosition,
                     const Environment& environment, float fogStart, float fogEnd,
@@ -50,7 +52,7 @@ public:
     int triangleCount() const { return triangleCount_; }
     int chunkCount() const { return static_cast<int>(meshes_.size()); }
     GLuint shadowTexture() const { return shadowTexture_; }
-    void invalidateShadowMap() { shadowMapValid_ = false; }
+    void invalidateShadowMap() { shadowMapValid_ = false; shadowMapNearValid_ = false; }
 
 private:
     struct Vertex {
@@ -91,9 +93,13 @@ private:
                           const Environment& environment, float fogStart, float fogEnd,
                           bool useClip, float clipY);
     void destroyMesh(ChunkMesh& mesh);
+    void renderShadowTarget(GLuint framebuffer, int size, const Mat4& lightViewProjection,
+                            bool includeGrass, float time, const Vec3& windDirection,
+                            float windStrength, const Vec3& playerPosition);
 
     Shader shader_;
     Shader shadowShader_;
+    Shader grassShadowShader_;
     Shader grassShader_;
     Shader waterShader_;
     TextureArray* textures_ = nullptr;
@@ -107,6 +113,15 @@ private:
     Vec3 lastShadowSun_{};
     Vec3 lastShadowFocus_{};
     bool shadowMapValid_ = false;
+
+    GLuint shadowFboNear_ = 0;
+    GLuint shadowTextureNear_ = 0;
+    int shadowSizeNear_ = 4096;
+    Mat4 lightViewProjectionNear_;
+    Vec3 lastNearShadowSun_{};
+    Vec3 lastNearShadowFocus_{};
+    float lastNearShadowTime_ = 0.0f;
+    bool shadowMapNearValid_ = false;
 };
 
 }

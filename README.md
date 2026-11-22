@@ -93,7 +93,7 @@ Useful options:
 - Chunk unloading and binary persistence for modified chunks.
 - Multiple procedural grass types: tall grass, meadow grass, dry grass, and fern with distinct colors, blade counts, and heights.
 - Grass reacts to changing wind direction, gust strength, and the player's position.
-- 4096x4096 directional shadow map with hardware PCF, normal-offset bias, and cached updates.
+- Two-cascade directional shadows: 4096 near cascade for sharp grass and terrain shadows plus a 4096 far cascade for distant terrain, both with hardware PCF and cached updates.
 - Procedural moving clouds, sun, moon, and stars.
 - Planar water reflections, animated waves, ripples, Fresnel reflections, and specular highlights.
 - Frustum culling for shadow, reflection, opaque, grass, transparent, and water passes.
@@ -112,7 +112,7 @@ Useful options:
 - Only cube-based block models are supported.
 - Animated textures use the first frame.
 - No weather, volumetric lighting, or cloud shadows.
-- Tall grass has no collision and does not cast shadows.
+- Tall grass has no collision. Its shadows are limited to the near shadow cascade (22 blocks).
 - Chunk generation and disk loading are multithreaded; mesh building and OpenGL uploads remain on the render thread and are budgeted per frame.
 - Grass LOD changes can pop when chunks cross the grass radius.
 - Meshes are rebuilt from chunk data and are not stored on disk.

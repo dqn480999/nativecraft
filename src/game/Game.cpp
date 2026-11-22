@@ -410,7 +410,8 @@ void Game::render() {
         }
     }
 
-    worldRenderer_.renderShadowMap(player_.position, environment_.sunDirection);
+    worldRenderer_.renderShadowMap(player_.position, environment_.sunDirection, elapsedTime_,
+                                  windDirection_, windStrength_, player_.position);
 
     const Vec3 eye = player_.eye();
     const Vec3 reflectedEye{eye.x, 2.0f * waterLevel_ - eye.y, eye.z};

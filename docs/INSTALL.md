@@ -128,7 +128,7 @@ Modified chunks are written to `saves/<seed>/chunks/<x>_<z>.nc`. Unmodified chun
 
 ### Performance
 
-Shadow mapping uses a 4096x4096 depth map with hardware PCF. Water reflections render the scene a second time at the window resolution. Chunk generation and disk loading run on a worker pool. Mesh construction is limited to two chunks per frame on the render thread. The default render radius of 6 chunks keeps more than 200 chunks loaded and about 400,000 triangles in view. Reduce `--render-distance`, `--grass-distance`, and `--threads` on slower CPUs or GPUs.
+Shadows use a 4096 near cascade and a 4096 far cascade with hardware PCF. The near cascade includes grass and refreshes ten times per second; the far cascade is cached. Water reflections render the scene a second time at the window resolution. Chunk generation and disk loading run on a worker pool. Mesh construction is limited to two chunks per frame on the render thread. The default render radius of 6 chunks keeps more than 200 chunks loaded and about 400,000 triangles in view. Reduce `--render-distance`, `--grass-distance`, and `--threads` on slower CPUs or GPUs.
 
 ### Wayland
 
