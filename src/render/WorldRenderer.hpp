@@ -83,6 +83,7 @@ private:
         float b;
         float a;
         float emission;
+        float skyLight;
     };
 
     struct ChunkMesh {

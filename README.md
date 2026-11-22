@@ -24,6 +24,10 @@ Textures, block models, blockstates, the bitmap font, language files, and sounds
 
 ![Flashlight](docs/screenshots/flashlight.png)
 
+![TNT explosion](docs/screenshots/tnt.png)
+
+![Survival](docs/screenshots/survival.png)
+
 ![Night](docs/screenshots/night.png)
 
 ![Snow-capped mountains](docs/screenshots/mountains.png)
@@ -103,8 +107,10 @@ Useful options:
 | 1-9, mouse wheel | Select hotbar slot |
 | Left click | Break block |
 | Right click | Place block |
+| G | Prime TNT under the crosshair |
+| R | Respawn after death |
 | F2 | Save screenshot to `screenshots/` |
-| Esc | Exit |
+| Esc | Exit or close inventory |
 
 ## Rendering and world features
 
@@ -124,6 +130,10 @@ Useful options:
 - Bottom slabs for stone, cobblestone, oak, sandstone, and bricks with partial collision and step-up.
 - Background music, looping water ambience when swimming, synthetic bird chirps, and low-altitude mist.
 - Dynamic point lights from placed glowstone and lava; glowstone/lava surfaces are emissive.
+- Skylight-based ambient: caves, tunnels and covered areas are genuinely dark; use glowstone or the flashlight.
+- TNT with fuse, crater destruction, chain reactions, knockback and damage, smoke, fire, debris particles, explosion flash, screen flash and sound.
+- Survival: health, hunger, oxygen, fall damage, lava damage, drowning, death and respawn.
+- Inventory collection and placement consumption; 9 recipes in a crafting panel (logs to planks, slabs, sandstone, TNT, and more).
 - Handheld flashlight spotlight with warm color, inner/outer cone falloff, range attenuation, and an HUD indicator. Starts with `--flashlight` or toggles with L.
 - Third-person Steve player model with skin, walk, idle, jump, swim, and attack animations. The model casts shadows in both shadow cascades.
 - Inventory with 27 storage slots and a 9-slot hotbar, item counts, block icons, click-to-move, and hotbar selection.
@@ -141,7 +151,8 @@ Useful options:
 ## Limitations
 
 - No item entities, crafting, mobs, or networking.
-- Inventory is creative-style: placing blocks does not consume stacks, and broken blocks are not picked up.
+- No tools, armor, food items, item entities, or block drops from explosions.
+- Crafting is available directly from the inventory; no placed crafting table is required.
 - Point lights are limited to 16 nearest sources and do not cast shadows.
 - Only cube and bottom-slab block models are supported.
 - Animated textures use the first frame.

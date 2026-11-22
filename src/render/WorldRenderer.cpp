@@ -108,6 +108,7 @@ layout(location = 2) in vec2 aUV;
 layout(location = 3) in float aLayer;
 layout(location = 4) in vec4 aColor;
 layout(location = 5) in float aEmission;
+layout(location = 6) in float aSkyLight;
 
 uniform mat4 uViewProj;
 uniform mat4 uLightVPNear;
@@ -120,6 +121,7 @@ out vec3 vNormal;
 out vec3 vUV;
 out vec4 vColor;
 out float vEmission;
+out float vSkyLight;
 out vec4 vShadowCoordNear;
 out vec4 vShadowCoordFar;
 
@@ -131,6 +133,7 @@ void main() {
     vUV = vec3(aUV, aLayer);
     vColor = aColor;
     vEmission = aEmission;
+    vSkyLight = aSkyLight;
     vShadowCoordNear = uLightVPNear
                      * vec4(aPos + aNormal * uShadowNormalOffsetNear, 1.0);
     vShadowCoordFar = uLightVPFar
@@ -145,6 +148,7 @@ in vec3 vNormal;
 in vec3 vUV;
 in vec4 vColor;
 in float vEmission;
+in float vSkyLight;
 in vec4 vShadowCoordNear;
 in vec4 vShadowCoordFar;
 
@@ -272,8 +276,9 @@ void main() {
                      shadowFactorFar(vShadowCoordFar, normal));
     }
     shadow = mix(1.0, shadow, uShadowStrength);
-    vec3 ambient = mix(uAmbientGround, uAmbientSky, normal.y * 0.5 + 0.5);
-    vec3 light = ambient + uSunColor * sun * shadow;
+    float skyFactor = mix(0.10, 1.0, vSkyLight);
+    vec3 ambient = mix(uAmbientGround, uAmbientSky, normal.y * 0.5 + 0.5) * skyFactor;
+    vec3 light = ambient + uSunColor * sun * shadow * vSkyLight;
 
     for (int i = 0; i < uPointLightCount; ++i) {
         vec3 delta = uPointLightPositions[i] - vWorldPos;
@@ -338,6 +343,7 @@ layout(location = 2) in vec2 aUV;
 layout(location = 3) in float aLayer;
 layout(location = 4) in vec4 aColor;
 layout(location = 5) in float aEmission;
+layout(location = 6) in float aSkyLight;
 
 uniform mat4 uViewProj;
 uniform mat4 uLightVP;
@@ -352,6 +358,7 @@ out vec3 vWorldPos;
 out vec3 vNormal;
 out vec3 vUV;
 out vec4 vColor;
+out float vSkyLight;
 out vec4 vShadowCoord;
 
 void main() {
@@ -377,6 +384,7 @@ void main() {
     vNormal = aNormal;
     vUV = vec3(aUV, aLayer);
     vColor = aColor;
+    vSkyLight = aSkyLight;
     vShadowCoord = uLightVP * vec4(position + aNormal * uShadowNormalOffset, 1.0);
     gl_Position = uViewProj * vec4(position, 1.0);
 }
@@ -388,6 +396,7 @@ in vec3 vWorldPos;
 in vec3 vNormal;
 in vec3 vUV;
 in vec4 vColor;
+in float vSkyLight;
 in vec4 vShadowCoord;
 
 uniform sampler2DShadow uShadowMap;
@@ -459,8 +468,9 @@ void main() {
     vec3 normal = normalize(vNormal);
     float sun = max(dot(normal, uSunDir), 0.0);
     float shadow = mix(1.0, shadowFactor(vShadowCoord, normal), uShadowStrength);
-    vec3 ambient = mix(uAmbientGround, uAmbientSky, normal.y * 0.5 + 0.5);
-    vec3 light = ambient * 0.85 + uSunColor * sun * shadow * 0.8;
+    float skyFactor = mix(0.10, 1.0, vSkyLight);
+    vec3 ambient = mix(uAmbientGround, uAmbientSky, normal.y * 0.5 + 0.5) * skyFactor;
+    vec3 light = ambient * 0.85 + uSunColor * sun * shadow * 0.8 * vSkyLight;
 
     for (int i = 0; i < uPointLightCount; ++i) {
         vec3 delta = uPointLightPositions[i] - vWorldPos;
@@ -508,6 +518,7 @@ layout(location = 2) in vec2 aUV;
 layout(location = 3) in float aLayer;
 layout(location = 4) in vec4 aColor;
 layout(location = 5) in float aEmission;
+layout(location = 6) in float aSkyLight;
 
 uniform mat4 uViewProj;
 uniform float uTime;
@@ -776,6 +787,9 @@ void WorldRenderer::uploadMesh(ChunkMesh& mesh, const std::vector<Vertex>& verti
     gl::EnableVertexAttribArray(5);
     gl::VertexAttribPointer(5, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex),
                             reinterpret_cast<void*>(offsetof(Vertex, emission)));
+    gl::EnableVertexAttribArray(6);
+    gl::VertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                            reinterpret_cast<void*>(offsetof(Vertex, skyLight)));
 
     gl::BindVertexArray(0);
     gl::BindBuffer(GL_ARRAY_BUFFER, 0);
@@ -808,6 +822,22 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
     const int baseX = chunkX * World::kChunkSize;
     const int baseZ = chunkZ * World::kChunkSize;
 
+    std::array<int, World::kChunkSize * World::kChunkSize> columnTop{};
+    columnTop.fill(-1);
+    for (int localZ = 0; localZ < World::kChunkSize; ++localZ) {
+        for (int localX = 0; localX < World::kChunkSize; ++localX) {
+            const int worldX = baseX + localX;
+            const int worldZ = baseZ + localZ;
+            for (int y = World::kHeight - 1; y >= 0; --y) {
+                const int block = world.get(worldX, y, worldZ);
+                if (block != 0 && registry.isOpaque(block)) {
+                    columnTop[static_cast<std::size_t>(localZ * World::kChunkSize + localX)] = y;
+                    break;
+                }
+            }
+        }
+    }
+
     for (int y = 0; y < World::kHeight; ++y) {
         for (int z = 0; z < World::kChunkSize; ++z) {
             for (int x = 0; x < World::kChunkSize; ++x) {
@@ -819,6 +849,9 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
                 }
 
                 const BlockDef& block = registry.def(blockId);
+                const int top = columnTop[static_cast<std::size_t>(
+                    z * World::kChunkSize + x)];
+                const float skyLight = (y >= top) ? 1.0f : 0.0f;
                 if (block.cross) {
                     if (!includeGrass) {
                         continue;
@@ -889,6 +922,7 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
                             out.b = tintBlue * shade;
                             out.a = 1.0f;
                             out.emission = block.lightEmission;
+                            out.skyLight = skyLight;
                             vertices.push_back(out);
                         }
 
@@ -946,6 +980,7 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
                             out.b = blue;
                             out.a = block.alpha;
                             out.emission = block.lightEmission;
+                            out.skyLight = skyLight;
                             vertices.push_back(out);
                         }
                         opaqueIndices.push_back(base + 0);
@@ -1005,6 +1040,7 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
                         out.b = blue;
                         out.a = block.alpha;
                         out.emission = block.lightEmission;
+                        out.skyLight = skyLight;
                         vertices.push_back(out);
                     }
 

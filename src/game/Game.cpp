@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <unordered_set>
 #include <thread>
 #include <vector>
 
@@ -202,6 +203,9 @@ bool Game::init(const GameOptions& options, std::string* error) {
     if (!playerRenderer_.init(assets_, error)) {
         return false;
     }
+    if (!particleRenderer_.init(error)) {
+        return false;
+    }
 
     thirdPerson_ = options_.thirdPerson;
     flashlightOn_ = options_.flashlight;
@@ -288,34 +292,67 @@ bool Game::init(const GameOptions& options, std::string* error) {
     hotbar_.clear();
     storage_.clear();
     heldStack_ = {};
-    for (const std::string& name : blocks_.hotbarNames()) {
+    const auto addHotbarItem = [this](const char* name, int count) {
         const int blockId = blocks_.id(name);
         if (blockId > 0 && hotbar_.size() < 9) {
-            hotbar_.push_back(ItemStack{blockId, 64});
+            hotbar_.push_back(ItemStack{blockId, count});
         }
-    }
+    };
+    addHotbarItem("oak_planks", 16);
+    addHotbarItem("cobblestone", 16);
+    addHotbarItem("stone", 8);
+    addHotbarItem("dirt", 16);
+    addHotbarItem("oak_log", 4);
+    addHotbarItem("sand", 8);
+    addHotbarItem("stone_slab", 8);
+    addHotbarItem("glass", 4);
+    addHotbarItem("tnt", 1);
     while (hotbar_.size() < 9) {
         hotbar_.push_back(ItemStack{});
-    }
-
-    static const char* kStorageBlocks[] = {
-        "stone_slab", "cobblestone_slab", "oak_slab", "sandstone_slab", "brick_slab",
-        "sandstone", "brick_block", "oak_leaves", "bookshelf", "crafting_table",
-        "furnace", "obsidian", "netherrack", "glowstone", "ice",
-        "snow", "clay", "hardened_clay", "tnt", "pumpkin",
-        "melon_block", "hay_block", "quartz_block", "white_wool", "red_wool",
-        "blue_wool", "black_wool",
-    };
-    for (const char* name : kStorageBlocks) {
-        const int blockId = blocks_.id(name);
-        if (blockId > 0 && storage_.size() < 27) {
-            storage_.push_back(ItemStack{blockId, 64});
-        }
     }
     while (storage_.size() < 27) {
         storage_.push_back(ItemStack{});
     }
+    const int glowstoneId = blocks_.id("glowstone");
+    if (glowstoneId > 0) {
+        addItem(glowstoneId, 16);
+    }
 
+    const auto addRecipe = [this](const char* outputName, int outputCount,
+                                  std::initializer_list<std::pair<const char*, int>> inputs) {
+        const int output = blocks_.id(outputName);
+        if (output <= 0) {
+            return;
+        }
+        CraftingRecipe recipe;
+        recipe.outputId = output;
+        recipe.outputCount = outputCount;
+        for (const auto& [name, count] : inputs) {
+            const int blockId = blocks_.id(name);
+            if (blockId <= 0) {
+                return;
+            }
+            recipe.inputs.emplace_back(blockId, count);
+        }
+        recipes_.push_back(std::move(recipe));
+    };
+    addRecipe("oak_planks", 4, {{"oak_log", 1}});
+    addRecipe("crafting_table", 1, {{"oak_planks", 4}});
+    addRecipe("oak_slab", 4, {{"oak_planks", 4}});
+    addRecipe("stone_slab", 4, {{"stone", 4}});
+    addRecipe("cobblestone_slab", 4, {{"cobblestone", 4}});
+    addRecipe("stonebrick", 1, {{"cobblestone", 4}});
+    addRecipe("sandstone", 1, {{"sand", 4}});
+    addRecipe("sandstone_slab", 4, {{"sandstone", 4}});
+    addRecipe("tnt", 1, {{"sand", 4}, {"redstone_ore", 1}});
+
+    spawnPosition_ = player_.position;
+    health_ = 20.0f;
+    hunger_ = 20.0f;
+    oxygen_ = 10.0f;
+    dead_ = false;
+    wasOnGround_ = player_.onGround;
+    fallStartY_ = player_.position.y;
     if (!screenshotMode_) {
         SDL_SetRelativeMouseMode(SDL_TRUE);
         mouseCaptured_ = true;
@@ -421,6 +458,18 @@ void Game::processEvents(bool& running) {
                 flashlightOn_ = !flashlightOn_;
                 logInfo("flashlight %s", flashlightOn_ ? "enabled" : "disabled");
                 break;
+            case SDLK_g: {
+                const RayHit hit = player_.raycast(*world_, blocks_, 6.0f);
+                if (hit.hit) {
+                    primeTnt(BlockPos{hit.x, hit.y, hit.z});
+                }
+                break;
+            }
+            case SDLK_r:
+                if (dead_) {
+                    respawn();
+                }
+                break;
             case SDLK_t:
                 timePaused_ = !timePaused_;
                 logInfo("time %s", timePaused_ ? "paused" : "running");
@@ -524,6 +573,10 @@ void Game::update(float deltaTime) {
         worldRenderer_.rebuildChunkAt(*world_, blocks_, pos);
     }
 
+    updateTnt(deltaTime);
+    updateParticles(deltaTime);
+    explosionFlashTime_ = std::max(0.0f, explosionFlashTime_ - deltaTime);
+
     if (screenshotMode_) {
         return;
     }
@@ -537,11 +590,34 @@ void Game::update(float deltaTime) {
     input.jump = keys[SDL_SCANCODE_SPACE] != 0;
     input.descend = keys[SDL_SCANCODE_LCTRL] != 0 || keys[SDL_SCANCODE_RCTRL] != 0;
     input.boost = keys[SDL_SCANCODE_LSHIFT] != 0 || keys[SDL_SCANCODE_RSHIFT] != 0;
-    if (inventoryOpen_) {
+    if (inventoryOpen_ || dead_) {
         input = {};
     }
 
-    player_.update(*world_, blocks_, input, deltaTime);
+    const bool wasOnGround = player_.onGround;
+    if (!dead_) {
+        player_.update(*world_, blocks_, input, deltaTime);
+    } else {
+        player_.velocity = {};
+    }
+    updateSurvival(deltaTime);
+
+    if (!player_.flying && !dead_) {
+        if (!player_.onGround) {
+            fallStartY_ = std::max(fallStartY_, player_.position.y);
+        } else {
+            if (!wasOnGround && !player_.inWater) {
+                const float fallDistance = fallStartY_ - player_.position.y;
+                if (fallDistance > 3.0f) {
+                    applyDamage((fallDistance - 3.0f) * 2.0f);
+                }
+            }
+            fallStartY_ = player_.position.y;
+        }
+        wasOnGround_ = player_.onGround;
+    } else {
+        fallStartY_ = player_.position.y;
+    }
 
     const float horizontalSpeed = std::sqrt(player_.velocity.x * player_.velocity.x
                                              + player_.velocity.z * player_.velocity.z);
@@ -591,6 +667,207 @@ void Game::update(float deltaTime) {
     } else {
         stepAccumulator_ = 0.0;
     }
+}
+
+float Game::random01() {
+    return std::uniform_real_distribution<float>(0.0f, 1.0f)(rng_);
+}
+
+void Game::primeTnt(const BlockPos& block) {
+    const int tntId = blocks_.id("tnt");
+    if (tntId <= 0 || world_->get(block.x, block.y, block.z) != tntId) {
+        return;
+    }
+    for (const PrimedTnt& primed : primedTnt_) {
+        if (primed.block == block) {
+            return;
+        }
+    }
+    primedTnt_.push_back(PrimedTnt{block, 2.4f, 0.0f});
+    audio_.playSound("minecraft/sounds/random/fuse.ogg", 0.75f);
+    logInfo("TNT primed at %d,%d,%d", block.x, block.y, block.z);
+}
+
+void Game::updateParticles(float deltaTime) {
+    for (Particle& particle : particles_) {
+        particle.life -= deltaTime;
+        particle.velocity.y -= particle.gravity * deltaTime;
+        const float damping = std::exp(-particle.drag * deltaTime);
+        particle.velocity.x *= damping;
+        particle.velocity.y *= damping;
+        particle.velocity.z *= damping;
+        particle.position += particle.velocity * deltaTime;
+    }
+    particles_.erase(std::remove_if(particles_.begin(), particles_.end(),
+                                    [](const Particle& particle) {
+                                        return particle.life <= 0.0f;
+                                    }),
+                     particles_.end());
+}
+
+void Game::updateTnt(float deltaTime) {
+    const int tntId = blocks_.id("tnt");
+    for (std::size_t i = 0; i < primedTnt_.size();) {
+        PrimedTnt& primed = primedTnt_[i];
+        if (tntId <= 0 || world_->get(primed.block.x, primed.block.y, primed.block.z) != tntId) {
+            primedTnt_.erase(primedTnt_.begin() + static_cast<std::ptrdiff_t>(i));
+            continue;
+        }
+        primed.fuse -= deltaTime;
+        primed.emitTimer -= deltaTime;
+        if (primed.emitTimer <= 0.0f) {
+            primed.emitTimer = 0.14f;
+            Particle smoke;
+            smoke.position = {static_cast<float>(primed.block.x) + 0.5f + (random01() - 0.5f) * 0.5f,
+                              static_cast<float>(primed.block.y) + 1.0f,
+                              static_cast<float>(primed.block.z) + 0.5f + (random01() - 0.5f) * 0.5f};
+            smoke.velocity = {(random01() - 0.5f) * 0.4f, 0.8f + random01(), (random01() - 0.5f) * 0.4f};
+            smoke.startColor = {0.45f, 0.42f, 0.38f};
+            smoke.endColor = {0.12f, 0.12f, 0.12f};
+            smoke.life = 0.7f;
+            smoke.maxLife = 0.7f;
+            smoke.startSize = 0.20f;
+            smoke.endSize = 0.55f;
+            smoke.gravity = 0.4f;
+            smoke.drag = 1.0f;
+            particles_.push_back(smoke);
+        }
+        if (primed.fuse <= 0.0f) {
+            const BlockPos block = primed.block;
+            primedTnt_.erase(primedTnt_.begin() + static_cast<std::ptrdiff_t>(i));
+            explodeTnt(block);
+            continue;
+        }
+        ++i;
+    }
+}
+
+void Game::explodeTnt(const BlockPos& block) {
+    const int tntId = blocks_.id("tnt");
+    const int bedrockId = blocks_.id("bedrock");
+    const Vec3 center{static_cast<float>(block.x) + 0.5f,
+                      static_cast<float>(block.y) + 0.5f,
+                      static_cast<float>(block.z) + 0.5f};
+    const float radius = 4.2f;
+    std::unordered_set<ChunkPos, ChunkPosHash> changedChunks;
+
+    if (world_->get(block.x, block.y, block.z) == tntId) {
+        world_->set(block.x, block.y, block.z, 0);
+    }
+    changedChunks.insert(World::chunkOf(block.x, block.z));
+
+    for (int dy = -4; dy <= 4; ++dy) {
+        for (int dz = -4; dz <= 4; ++dz) {
+            for (int dx = -4; dx <= 4; ++dx) {
+                if (static_cast<float>(dx * dx + dy * dy + dz * dz) > radius * radius) {
+                    continue;
+                }
+                const int x = block.x + dx;
+                const int y = block.y + dy;
+                const int z = block.z + dz;
+                const int blockId = world_->get(x, y, z);
+                if (blockId == 0 || blockId == bedrockId || blocks_.isLiquid(blockId)) {
+                    continue;
+                }
+                const BlockDef& def = blocks_.def(blockId);
+                if (def.name == "tnt") {
+                    bool alreadyPrimed = false;
+                    for (const PrimedTnt& primed : primedTnt_) {
+                        if (primed.block == BlockPos{x, y, z}) {
+                            alreadyPrimed = true;
+                            break;
+                        }
+                    }
+                    if (!alreadyPrimed) {
+                        primedTnt_.push_back(PrimedTnt{BlockPos{x, y, z}, 0.35f, 0.0f});
+                    }
+                    continue;
+                }
+
+                world_->set(x, y, z, 0);
+                changedChunks.insert(World::chunkOf(x, z));
+                const int up = static_cast<int>(Face::Up);
+                const Vec3 base = textures_.averageColor(def.layers[up]);
+                const Vec3 tint{def.tints[up][0], def.tints[up][1], def.tints[up][2]};
+                for (int particleIndex = 0; particleIndex < 2; ++particleIndex) {
+                    Particle debris;
+                    debris.position = {static_cast<float>(x) + random01(),
+                                       static_cast<float>(y) + random01(),
+                                       static_cast<float>(z) + random01()};
+                    debris.velocity = {(random01() - 0.5f) * 7.0f,
+                                       1.0f + random01() * 5.0f,
+                                       (random01() - 0.5f) * 7.0f};
+                    debris.startColor = {base.x * tint.x, base.y * tint.y, base.z * tint.z};
+                    debris.endColor = debris.startColor * 0.45f;
+                    debris.life = 0.6f + random01() * 0.8f;
+                    debris.maxLife = debris.life;
+                    debris.startSize = 0.12f;
+                    debris.endSize = 0.06f;
+                    debris.gravity = 9.0f;
+                    debris.drag = 0.4f;
+                    particles_.push_back(debris);
+                }
+            }
+        }
+    }
+
+    for (const ChunkPos& chunk : changedChunks) {
+        worldRenderer_.rebuildChunkAt(*world_, blocks_, chunk);
+    }
+
+    for (int i = 0; i < 80; ++i) {
+        Particle smoke;
+        smoke.position = center + Vec3{(random01() - 0.5f) * 2.0f,
+                                       0.5f + random01() * 2.0f,
+                                       (random01() - 0.5f) * 2.0f};
+        smoke.velocity = {(random01() - 0.5f) * 7.0f,
+                          1.5f + random01() * 5.0f,
+                          (random01() - 0.5f) * 7.0f};
+        smoke.startColor = {0.38f, 0.35f, 0.32f};
+        smoke.endColor = {0.05f, 0.05f, 0.05f};
+        smoke.life = 1.2f + random01() * 1.8f;
+        smoke.maxLife = smoke.life;
+        smoke.startSize = 0.35f + random01() * 0.4f;
+        smoke.endSize = 1.2f + random01() * 1.4f;
+        smoke.gravity = 0.2f;
+        smoke.drag = 1.4f;
+        particles_.push_back(smoke);
+    }
+
+    for (int i = 0; i < 50; ++i) {
+        Particle fire;
+        fire.position = center + Vec3{(random01() - 0.5f) * 1.5f,
+                                      0.2f + random01() * 1.5f,
+                                      (random01() - 0.5f) * 1.5f};
+        fire.velocity = {(random01() - 0.5f) * 8.0f,
+                         2.0f + random01() * 6.0f,
+                         (random01() - 0.5f) * 8.0f};
+        fire.startColor = {1.0f, 0.85f, 0.25f};
+        fire.endColor = {1.0f, 0.16f, 0.02f};
+        fire.life = 0.3f + random01() * 0.55f;
+        fire.maxLife = fire.life;
+        fire.startSize = 0.18f;
+        fire.endSize = 0.5f;
+        fire.gravity = -1.2f;
+        fire.drag = 1.8f;
+        particles_.push_back(fire);
+    }
+
+    const Vec3 toPlayer = player_.position - center;
+    const float distance = length(toPlayer);
+    if (distance < 9.0f) {
+        const float strength = (9.0f - distance) / 9.0f;
+        player_.velocity += normalize(toPlayer) * (8.0f * strength)
+                          + Vec3{0.0f, 4.0f * strength, 0.0f};
+        applyDamage(10.0f * strength);
+    }
+
+    explosionFlashPosition_ = center;
+    explosionFlashTime_ = 0.45f;
+    audio_.playSound("minecraft/sounds/random/explode"
+                     + std::to_string(1 + static_cast<int>(random01() * 4.0f)) + ".ogg",
+                     1.0f);
+    logInfo("TNT exploded at %d,%d,%d", block.x, block.y, block.z);
 }
 
 PlayerRenderState Game::buildPlayerRenderState() const {
@@ -692,6 +969,13 @@ void Game::render() {
     if (pointLights.size() > 16) {
         pointLights.resize(16);
     }
+    if (explosionFlashTime_ > 0.0f) {
+        const float intensity = clampf(explosionFlashTime_ / 0.45f, 0.0f, 1.0f);
+        pointLights.push_back(PointLight{explosionFlashPosition_,
+                                         {5.0f * intensity, 2.2f * intensity,
+                                          0.4f * intensity},
+                                         30.0f});
+    }
     worldRenderer_.setDynamicLights(pointLights);
     worldRenderer_.setFlashlight(flashlightOn_, player_.eye(), player_.forward());
     worldRenderer_.setWaterState(waterLevel_, elapsedTime_, underwater_);
@@ -761,6 +1045,8 @@ void Game::render() {
     worldRenderer_.drawWater(viewProjection, viewEye, renderEnvironment, fogStart, fogEnd,
                              reflection_.colorTexture(), reflectionViewProjection,
                              elapsedTime_, waterLevel_);
+    particleRenderer_.render(viewProjection, viewEye, renderEnvironment, fogStart, fogEnd,
+                             height, particles_);
     drawHud();
 }
 
@@ -770,16 +1056,41 @@ void Game::drawHud() {
     SDL_GetWindowSize(window_, &width, &height);
 
     hud_.begin(width, height);
+    if (dead_) {
+        hud_.drawRect(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height),
+                      {0.18f, 0.01f, 0.01f}, 0.62f);
+        const std::string title = "You died";
+        const std::string hint = "Press R to respawn";
+        const float titleWidth = hud_.textWidth(title, 3.0f);
+        const float hintWidth = hud_.textWidth(hint, 1.6f);
+        hud_.drawText((static_cast<float>(width) - titleWidth) * 0.5f,
+                      static_cast<float>(height) * 0.42f, title, 3.0f, {1.0f, 0.9f, 0.9f});
+        hud_.drawText((static_cast<float>(width) - hintWidth) * 0.5f,
+                      static_cast<float>(height) * 0.42f + 54.0f, hint, 1.6f,
+                      {1.0f, 0.85f, 0.85f});
+        hud_.end();
+        return;
+    }
     if (inventoryOpen_) {
         drawInventory(width, height);
         hud_.end();
         return;
+    }
+    if (damageFlashTime_ > 0.0f) {
+        hud_.drawRect(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height),
+                      {0.7f, 0.02f, 0.02f},
+                      clampf(damageFlashTime_ * 0.7f, 0.0f, 0.28f));
     }
     if (underwater_) {
         const Vec3 tint = underwaterLava_ ? Vec3{0.55f, 0.20f, 0.05f}
                                           : Vec3{0.02f, 0.20f, 0.30f};
         hud_.drawRect(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), tint,
                       underwaterLava_ ? 0.28f : 0.12f);
+    }
+    if (explosionFlashTime_ > 0.0f) {
+        hud_.drawRect(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height),
+                      {1.0f, 0.62f, 0.18f},
+                      clampf(explosionFlashTime_ * 0.9f, 0.0f, 0.45f));
     }
     hud_.drawCrosshair();
 
@@ -821,6 +1132,30 @@ void Game::drawHud() {
                   timePaused_ ? "PAUSED" : "RUNNING",
                   flashlightOn_ ? "FLASHLIGHT" : "");
     shadowText(12.0f, 72.0f, line, 1.4f, {0.86f, 0.92f, 1.0f});
+
+    const float statusY = static_cast<float>(height) - 112.0f;
+    hud_.drawRect(12.0f, statusY - 4.0f, 128.0f, 18.0f, {0.0f, 0.0f, 0.0f}, 0.35f);
+    hud_.drawRect(static_cast<float>(width) - 140.0f, statusY - 4.0f, 128.0f, 18.0f,
+                  {0.0f, 0.0f, 0.0f}, 0.35f);
+    for (int i = 0; i < 10; ++i) {
+        const bool full = health_ >= static_cast<float>((i + 1) * 2);
+        hud_.drawRect(16.0f + static_cast<float>(i) * 12.0f, statusY, 10.0f, 10.0f,
+                      full ? Vec3{0.85f, 0.08f, 0.08f} : Vec3{0.25f, 0.05f, 0.05f}, 0.95f);
+        const bool fed = hunger_ >= static_cast<float>((i + 1) * 2);
+        hud_.drawRect(static_cast<float>(width) - 136.0f + static_cast<float>(i) * 12.0f,
+                      statusY, 10.0f, 10.0f,
+                      fed ? Vec3{0.75f, 0.48f, 0.12f} : Vec3{0.22f, 0.14f, 0.05f}, 0.95f);
+    }
+    if (oxygen_ < 10.0f) {
+        const float oxygenWidth = 10.0f * 12.0f;
+        const float oxygenX = (static_cast<float>(width) - oxygenWidth) * 0.5f;
+        for (int i = 0; i < 10; ++i) {
+            const bool full = oxygen_ >= static_cast<float>(i + 1);
+            hud_.drawRect(oxygenX + static_cast<float>(i) * 12.0f, statusY - 14.0f, 10.0f,
+                          8.0f, full ? Vec3{0.2f, 0.6f, 0.95f} : Vec3{0.05f, 0.12f, 0.2f},
+                          0.9f);
+        }
+    }
 
     const int slots = static_cast<int>(hotbar_.size());
     if (slots > 0) {
@@ -872,14 +1207,200 @@ void Game::drawHud() {
     hud_.end();
 }
 
+int Game::itemCount(int blockId) const {
+    int total = 0;
+    for (const ItemStack& stack : hotbar_) {
+        if (stack.blockId == blockId && stack.count > 0) {
+            total += stack.count;
+        }
+    }
+    for (const ItemStack& stack : storage_) {
+        if (stack.blockId == blockId && stack.count > 0) {
+            total += stack.count;
+        }
+    }
+    return total;
+}
+
+bool Game::addItem(int blockId, int count) {
+    if (blockId <= 0 || count <= 0) {
+        return false;
+    }
+    int remaining = count;
+    const auto fill = [&](std::vector<ItemStack>& slots) {
+        for (ItemStack& stack : slots) {
+            if (remaining <= 0) {
+                return;
+            }
+            if (stack.blockId == blockId && stack.count > 0 && stack.count < 64) {
+                const int added = std::min(64 - stack.count, remaining);
+                stack.count += added;
+                remaining -= added;
+            }
+        }
+        for (ItemStack& stack : slots) {
+            if (remaining <= 0) {
+                return;
+            }
+            if (stack.blockId == 0 || stack.count <= 0) {
+                stack.blockId = blockId;
+                stack.count = std::min(64, remaining);
+                remaining -= stack.count;
+            }
+        }
+    };
+    fill(hotbar_);
+    fill(storage_);
+    return remaining == 0;
+}
+
+bool Game::removeItems(int blockId, int count) {
+    if (count <= 0) {
+        return true;
+    }
+    if (itemCount(blockId) < count) {
+        return false;
+    }
+    int remaining = count;
+    const auto remove = [&](std::vector<ItemStack>& slots) {
+        for (ItemStack& stack : slots) {
+            if (remaining <= 0) {
+                return;
+            }
+            if (stack.blockId == blockId && stack.count > 0) {
+                const int taken = std::min(stack.count, remaining);
+                stack.count -= taken;
+                remaining -= taken;
+                if (stack.count <= 0) {
+                    stack = {};
+                }
+            }
+        }
+    };
+    remove(hotbar_);
+    remove(storage_);
+    return remaining == 0;
+}
+
+bool Game::craftRecipe(int index) {
+    if (index < 0 || static_cast<std::size_t>(index) >= recipes_.size()) {
+        return false;
+    }
+    const CraftingRecipe& recipe = recipes_[static_cast<std::size_t>(index)];
+    for (const auto& [blockId, count] : recipe.inputs) {
+        if (itemCount(blockId) < count) {
+            return false;
+        }
+    }
+    for (const auto& [blockId, count] : recipe.inputs) {
+        removeItems(blockId, count);
+    }
+    if (!addItem(recipe.outputId, recipe.outputCount)) {
+        return false;
+    }
+    audio_.playSound("minecraft/sounds/random/click.ogg", 0.35f);
+    logInfo("crafted %s x%d", blocks_.def(recipe.outputId).name.c_str(), recipe.outputCount);
+    return true;
+}
+
+std::array<float, 4> Game::inventoryRecipeRect(int index, int width, int height) const {
+    constexpr float slotSize = 40.0f;
+    constexpr float gap = 4.0f;
+    constexpr float gridWidth = 9 * slotSize + 8 * gap;
+    constexpr float gridHeight = 4 * slotSize + 3 * gap;
+    constexpr float recipeWidth = 300.0f;
+    constexpr float panelGap = 20.0f;
+    constexpr float rowHeight = 34.0f;
+    const float contentWidth = gridWidth + panelGap + recipeWidth;
+    const float originX = (static_cast<float>(width) - contentWidth) * 0.5f;
+    const float originY = (static_cast<float>(height) - gridHeight) * 0.5f;
+    return {originX + gridWidth + panelGap, originY + static_cast<float>(index) * rowHeight,
+            recipeWidth, rowHeight};
+}
+
+int Game::inventoryRecipeAt(int mouseX, int mouseY, int width, int height) const {
+    for (std::size_t i = 0; i < recipes_.size(); ++i) {
+        const auto rect = inventoryRecipeRect(static_cast<int>(i), width, height);
+        if (static_cast<float>(mouseX) >= rect[0] && static_cast<float>(mouseX) < rect[0] + rect[2]
+            && static_cast<float>(mouseY) >= rect[1]
+            && static_cast<float>(mouseY) < rect[1] + rect[3]) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void Game::applyDamage(float amount) {
+    if (dead_ || amount <= 0.0f) {
+        return;
+    }
+    health_ = std::max(0.0f, health_ - amount);
+    damageFlashTime_ = 0.35f;
+    if (health_ <= 0.0f) {
+        dead_ = true;
+        player_.velocity = {};
+        logInfo("player died");
+    }
+}
+
+void Game::respawn() {
+    player_.position = spawnPosition_;
+    player_.velocity = {};
+    player_.flying = false;
+    health_ = 20.0f;
+    hunger_ = 20.0f;
+    oxygen_ = 10.0f;
+    dead_ = false;
+    damageFlashTime_ = 0.0f;
+    fallStartY_ = player_.position.y;
+    wasOnGround_ = player_.onGround;
+}
+
+void Game::updateSurvival(float deltaTime) {
+    if (dead_) {
+        return;
+    }
+    const Vec3 eye = player_.eye();
+    const int eyeX = static_cast<int>(std::floor(eye.x));
+    const int eyeY = static_cast<int>(std::floor(eye.y));
+    const int eyeZ = static_cast<int>(std::floor(eye.z));
+    const int eyeBlock = world_->get(eyeX, eyeY, eyeZ);
+    const bool headInLiquid = blocks_.isLiquid(eyeBlock);
+    const bool inLava = headInLiquid && blocks_.def(eyeBlock).name == "lava";
+
+    if (inLava) {
+        applyDamage(4.0f * deltaTime);
+        oxygen_ = 10.0f;
+    } else if (headInLiquid) {
+        oxygen_ = std::max(0.0f, oxygen_ - deltaTime);
+        if (oxygen_ <= 0.0f) {
+            applyDamage(2.0f * deltaTime);
+        }
+    } else {
+        oxygen_ = 10.0f;
+    }
+
+    hunger_ = std::max(0.0f, hunger_ - deltaTime * 0.015f);
+    if (hunger_ <= 0.0f) {
+        applyDamage(0.5f * deltaTime);
+    } else if (health_ < 20.0f && hunger_ > 15.0f) {
+        health_ = std::min(20.0f, health_ + 0.5f * deltaTime);
+        hunger_ = std::max(0.0f, hunger_ - deltaTime * 0.05f);
+    }
+    damageFlashTime_ = std::max(0.0f, damageFlashTime_ - deltaTime);
+}
+
 std::array<float, 4> Game::inventorySlotRect(int index, int width, int height) const {
     constexpr float slotSize = 40.0f;
     constexpr float gap = 4.0f;
     constexpr int columns = 9;
     constexpr int rows = 4;
+    constexpr float recipeWidth = 300.0f;
+    constexpr float panelGap = 20.0f;
     const float totalWidth = columns * slotSize + (columns - 1) * gap;
     const float totalHeight = rows * slotSize + (rows - 1) * gap;
-    const float originX = (static_cast<float>(width) - totalWidth) * 0.5f;
+    const float contentWidth = totalWidth + panelGap + recipeWidth;
+    const float originX = (static_cast<float>(width) - contentWidth) * 0.5f;
     const float originY = (static_cast<float>(height) - totalHeight) * 0.5f;
     const int row = index / columns;
     const int column = index % columns;
@@ -957,6 +1478,11 @@ void Game::handleInventoryClick(int mouseX, int mouseY, int button) {
     int width = 1;
     int height = 1;
     SDL_GetWindowSize(window_, &width, &height);
+    const int recipeIndex = inventoryRecipeAt(mouseX, mouseY, width, height);
+    if (recipeIndex >= 0) {
+        craftRecipe(recipeIndex);
+        return;
+    }
     const int slotIndex = inventorySlotAt(mouseX, mouseY, width, height);
     if (slotIndex < 0) {
         return;
@@ -988,21 +1514,32 @@ void Game::drawInventory(int width, int height) {
     constexpr float gap = 4.0f;
     constexpr int columns = 9;
     constexpr int rows = 4;
+    constexpr float recipeWidth = 300.0f;
+    constexpr float recipeRowHeight = 34.0f;
+    constexpr float panelGap = 20.0f;
     const float totalWidth = columns * slotSize + (columns - 1) * gap;
     const float totalHeight = rows * slotSize + (rows - 1) * gap;
-    const float originX = (static_cast<float>(width) - totalWidth) * 0.5f;
+    const float contentWidth = totalWidth + panelGap + recipeWidth;
+    const float originX = (static_cast<float>(width) - contentWidth) * 0.5f;
     const float originY = (static_cast<float>(height) - totalHeight) * 0.5f;
+    const float recipeHeight =
+        std::max(totalHeight, recipeRowHeight * static_cast<float>(recipes_.size())) + 6.0f;
 
     hud_.drawRect(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height),
                   {0.0f, 0.0f, 0.0f}, 0.55f);
     hud_.drawRect(originX - 14.0f, originY - 48.0f, totalWidth + 28.0f, totalHeight + 64.0f,
                   {0.08f, 0.08f, 0.10f}, 0.94f);
+    hud_.drawRect(originX + totalWidth + panelGap - 12.0f, originY - 48.0f,
+                  recipeWidth + 24.0f, recipeHeight + 62.0f, {0.08f, 0.08f, 0.10f}, 0.94f);
     hud_.drawText(originX, originY - 38.0f, "Inventory", 2.0f, {1.0f, 1.0f, 1.0f});
+    hud_.drawText(originX + totalWidth + panelGap, originY - 38.0f, "Crafting", 2.0f,
+                  {1.0f, 1.0f, 1.0f});
 
     int mouseX = 0;
     int mouseY = 0;
     SDL_GetMouseState(&mouseX, &mouseY);
     const int hovered = inventorySlotAt(mouseX, mouseY, width, height);
+    const int hoveredRecipe = inventoryRecipeAt(mouseX, mouseY, width, height);
 
     for (int index = 0; index < 36; ++index) {
         const auto rect = inventorySlotRect(index, width, height);
@@ -1037,6 +1574,31 @@ void Game::drawInventory(int width, int height) {
         }
     }
 
+    for (std::size_t index = 0; index < recipes_.size(); ++index) {
+        const auto rect = inventoryRecipeRect(static_cast<int>(index), width, height);
+        bool craftable = true;
+        std::string description =
+            std::to_string(recipes_[index].outputCount) + "x "
+            + blocks_.def(recipes_[index].outputId).name + "  <-  ";
+        for (const auto& [blockId, count] : recipes_[index].inputs) {
+            if (itemCount(blockId) < count) {
+                craftable = false;
+            }
+            description += std::to_string(count) + "x " + blocks_.def(blockId).name + "  ";
+        }
+        hud_.drawRect(rect[0], rect[1], rect[2], rect[3],
+                      hoveredRecipe == static_cast<int>(index) ? Vec3{0.30f, 0.30f, 0.30f}
+                                                              : Vec3{0.14f, 0.14f, 0.18f},
+                      0.96f);
+        const BlockDef& output = blocks_.def(recipes_[index].outputId);
+        const int up = static_cast<int>(Face::Up);
+        const Vec3 tint{output.tints[up][0], output.tints[up][1], output.tints[up][2]};
+        hud_.drawBlockIcon(rect[0] + 4.0f, rect[1] + 4.0f, 24.0f, output.layers[up], tint,
+                           0.98f);
+        hud_.drawText(rect[0] + 34.0f, rect[1] + 9.0f, description, 1.0f,
+                      craftable ? Vec3{0.92f, 0.92f, 0.92f} : Vec3{0.45f, 0.45f, 0.45f});
+    }
+
     if (heldStack_.blockId > 0 && heldStack_.count > 0) {
         const BlockDef& block = blocks_.def(heldStack_.blockId);
         const int up = static_cast<int>(Face::Up);
@@ -1049,8 +1611,8 @@ void Game::drawInventory(int width, int height) {
         }
     }
 
-    hud_.drawText(originX, originY + totalHeight + 8.0f,
-                  "Left click: move item    Right click hotbar: select    E: close", 1.3f,
+    hud_.drawText(originX, originY + std::max(totalHeight, recipeHeight) + 8.0f,
+                  "Left click: move/craft    Right click hotbar: select    E: close", 1.3f,
                   {0.85f, 0.85f, 0.85f});
 }
 
@@ -1091,9 +1653,14 @@ void Game::handleBreak() {
     if (tallGrass > 0 && world_->get(hit.x, hit.y + 1, hit.z) == tallGrass) {
         world_->set(hit.x, hit.y + 1, hit.z, 0);
     }
+    const BlockDef& brokenBlock = blocks_.def(blockId);
+    if (brokenBlock.name != "bedrock" && !brokenBlock.cross
+        && !addItem(blockId, 1)) {
+        logWarn("inventory full, lost %s", brokenBlock.name.c_str());
+    }
     worldRenderer_.rebuildAround(*world_, blocks_, hit.x, hit.z);
-    audio_.playSound(digSound(blockMaterial(blocks_.def(blockId).name), soundCounter_++), 0.7f);
-    logInfo("broke %s at %d %d %d", blocks_.def(blockId).name.c_str(), hit.x, hit.y, hit.z);
+    audio_.playSound(digSound(blockMaterial(brokenBlock.name), soundCounter_++), 0.7f);
+    logInfo("broke %s at %d %d %d", brokenBlock.name.c_str(), hit.x, hit.y, hit.z);
 }
 
 void Game::handlePlace() {
@@ -1138,6 +1705,16 @@ void Game::handlePlace() {
     world_->set(px, py, pz, static_cast<std::uint8_t>(blockId));
     worldRenderer_.rebuildAround(*world_, blocks_, px, pz);
     audio_.playSound(digSound(blockMaterial(blocks_.def(blockId).name), soundCounter_++), 0.6f);
+    if (!hotbar_.empty()) {
+        ItemStack& stack =
+            hotbar_[static_cast<std::size_t>(selectedSlot_) % hotbar_.size()];
+        if (stack.count > 0) {
+            --stack.count;
+            if (stack.count <= 0) {
+                stack = {};
+            }
+        }
+    }
     logInfo("placed %s at %d %d %d", blocks_.def(blockId).name.c_str(), px, py, pz);
 }
 
@@ -1381,6 +1958,7 @@ void Game::shutdown() {
     audio_.shutdown();
     hud_.destroy();
     playerRenderer_.destroy();
+    particleRenderer_.destroy();
     sky_.destroy();
     reflection_.destroy();
     worldRenderer_.destroy();

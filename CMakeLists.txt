@@ -32,6 +32,7 @@ add_executable(nativecraft
     src/render/ReflectionTarget.cpp
     src/render/WorldRenderer.cpp
     src/render/PlayerRenderer.cpp
+    src/render/Particles.cpp
     src/render/Hud.cpp
     src/world/Blocks.cpp
     src/world/World.cpp

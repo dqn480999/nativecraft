@@ -2,7 +2,9 @@
 
 #include <array>
 #include <cstdint>
+#include <utility>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -13,6 +15,7 @@
 #include "game/Player.hpp"
 #include "render/Environment.hpp"
 #include "render/Hud.hpp"
+#include "render/Particles.hpp"
 #include "render/PlayerRenderer.hpp"
 #include "render/ReflectionTarget.hpp"
 #include "render/SkyRenderer.hpp"
@@ -26,6 +29,18 @@ namespace nc {
 struct ItemStack {
     int blockId = 0;
     int count = 0;
+};
+
+struct PrimedTnt {
+    BlockPos block{};
+    float fuse = 2.5f;
+    float emitTimer = 0.0f;
+};
+
+struct CraftingRecipe {
+    int outputId = 0;
+    int outputCount = 1;
+    std::vector<std::pair<int, int>> inputs;
 };
 
 struct GameOptions {
@@ -66,6 +81,20 @@ private:
     void takeScreenshot(const std::string& path);
     void renderRaytrace(const std::string& path);
     PlayerRenderState buildPlayerRenderState() const;
+    void primeTnt(const BlockPos& block);
+    void updateTnt(float deltaTime);
+    void explodeTnt(const BlockPos& block);
+    void updateParticles(float deltaTime);
+    void updateSurvival(float deltaTime);
+    void applyDamage(float amount);
+    void respawn();
+    bool addItem(int blockId, int count);
+    bool removeItems(int blockId, int count);
+    int itemCount(int blockId) const;
+    bool craftRecipe(int index);
+    std::array<float, 4> inventoryRecipeRect(int index, int width, int height) const;
+    int inventoryRecipeAt(int mouseX, int mouseY, int width, int height) const;
+    float random01();
     void toggleInventory();
     void closeInventory();
     void handleInventoryClick(int mouseX, int mouseY, int button);
@@ -86,6 +115,7 @@ private:
     std::unique_ptr<World> world_;
     WorldRenderer worldRenderer_;
     PlayerRenderer playerRenderer_;
+    ParticleRenderer particleRenderer_;
     SkyRenderer sky_;
     ReflectionTarget reflection_;
     Hud hud_;
@@ -108,6 +138,20 @@ private:
     float walkAmount_ = 0.0f;
     float attackSwing_ = 0.0f;
     double birdTimer_ = 7.0;
+    std::mt19937 rng_{0x5EED1234};
+    std::vector<Particle> particles_;
+    std::vector<PrimedTnt> primedTnt_;
+    Vec3 explosionFlashPosition_{};
+    float explosionFlashTime_ = 0.0f;
+    float health_ = 20.0f;
+    float hunger_ = 20.0f;
+    float oxygen_ = 10.0f;
+    bool dead_ = false;
+    float damageFlashTime_ = 0.0f;
+    bool wasOnGround_ = true;
+    float fallStartY_ = 0.0f;
+    Vec3 spawnPosition_{};
+    std::vector<CraftingRecipe> recipes_;
     ChunkPos lastStreamCenter_{};
     bool hasStreamCenter_ = false;
 

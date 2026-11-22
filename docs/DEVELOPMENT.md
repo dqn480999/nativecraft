@@ -135,6 +135,28 @@ All world passes use frustum culling against cached chunk bounds.
 - Left-click picks up, swaps, or places a stack; right-clicking a hotbar slot selects it.
 - The UI uses the same block icons and bitmap font as the HUD.
 
+## Skylight
+
+- Each chunk mesh computes the topmost opaque block for every column.
+- Vertices above that height receive full skylight; vertices below receive 10% ambient and no direct sun.
+- Tall grass and other non-opaque vegetation no longer block skylight; leaves do not block ambient but still cast sun shadows.
+- This makes dug tunnels and caves dark until lit by glowstone, lava, or the flashlight.
+
+## TNT and particles
+
+- Right-clicking a TNT block or pressing G primes it with a 2.4 second fuse.
+- The fuse emits smoke particles and plays `random/fuse.ogg`.
+- Explosion destroys blocks in a 4.2 block radius, primes nearby TNT for chain reactions, and rebuilds affected chunks.
+- Effects: smoke, fire, debris particles, a transient point light, a HUD flash, an explosion sound, player knockback and damage.
+- Particles are GPU point sprites with radial alpha, color interpolation, gravity, drag, and fog.
+
+## Survival and crafting
+
+- Health, hunger, and oxygen are tracked and shown as HUD bars.
+- Fall damage, drowning damage, lava damage, starvation, regeneration, death, and R-to-respawn are implemented.
+- Breaking solid blocks adds them to the inventory; placing blocks consumes a stack item.
+- The inventory includes a crafting panel with nine recipes. Inputs are consumed across hotbar and storage slots; outputs stack into free space.
+
 ## Dynamic lighting
 
 - Glowstone and lava blocks carry a per-vertex emission attribute; the world shader adds their texture color as emission.
@@ -221,8 +243,8 @@ Verified on:
 1. Worker-side mesh construction with immutable chunk snapshots.
 2. Anvil and NBT support for importing existing 1.12.2 saves.
 3. Full block model geometry: `elements`, `multipart`, rotations, `uvlock`, cross models, stairs, fences, panes.
-4. Item entities, block drops, crafting, and item pickup.
-5. Skylight and blocklight propagation.
+4. Item entities, block drops, and item pickup.
+5. Blocklight propagation and light attenuation through water.
 6. Entities and mobs.
 7. Networking and the 1.12.2 protocol.
 8. Biomes, structures, cave generation, and larger vertical range.
