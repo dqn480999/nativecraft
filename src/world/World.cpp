@@ -233,6 +233,23 @@ void World::generate(const BlockRegistry& registry) {
         }
     }
 
+    const int tallGrass = registry.id("tall_grass");
+    if (tallGrass > 0) {
+        for (int z = 2; z < depth - 2; ++z) {
+            for (int x = 2; x < width - 2; ++x) {
+                if (hash3(x, 1, z, seed_ ^ 0x51A55ull) % 3u != 0u) {
+                    continue;
+                }
+                const int surface = surfaceY(x, z);
+                if (surface + 1 >= kHeight || get(x, surface, z) != grass
+                    || get(x, surface + 1, z) != 0) {
+                    continue;
+                }
+                set(x, surface + 1, z, static_cast<std::uint8_t>(tallGrass));
+            }
+        }
+    }
+
     logInfo("world generated: %dx%dx%d, seed=%llu", width, kHeight, depth,
             static_cast<unsigned long long>(seed_));
 }

@@ -376,6 +376,8 @@ void Game::render() {
     sky_.render(viewProjection.inverse(), eye, environment_, elapsedTime_);
     worldRenderer_.drawOpaque(viewProjection, eye, environment_, 80.0f, 230.0f, false, 0.0f,
                               false);
+    worldRenderer_.drawGrass(viewProjection, eye, environment_, 80.0f, 230.0f, elapsedTime_,
+                             player_.position);
     worldRenderer_.drawTransparent(viewProjection, eye, environment_, 80.0f, 230.0f);
     worldRenderer_.drawWater(viewProjection, eye, environment_, 80.0f, 230.0f,
                              reflection_.colorTexture(), reflectionViewProjection,
@@ -496,6 +498,10 @@ void Game::handleBreak() {
         return;
     }
     world_->set(hit.x, hit.y, hit.z, 0);
+    const int tallGrass = blocks_.id("tall_grass");
+    if (tallGrass > 0 && world_->get(hit.x, hit.y + 1, hit.z) == tallGrass) {
+        world_->set(hit.x, hit.y + 1, hit.z, 0);
+    }
     worldRenderer_.rebuildAround(*world_, blocks_, hit.x, hit.z);
     audio_.playSound(digSound(blockMaterial(blocks_.def(blockId).name), soundCounter_++), 0.7f);
     logInfo("broke %s at %d %d %d", blocks_.def(blockId).name.c_str(), hit.x, hit.y, hit.z);
@@ -522,7 +528,7 @@ void Game::handlePlace() {
         return;
     }
     const int existing = world_->get(px, py, pz);
-    if (existing != 0 && !blocks_.isLiquid(existing)) {
+    if (existing != 0 && blocks_.isSolid(existing)) {
         return;
     }
 

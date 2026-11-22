@@ -31,6 +31,10 @@ public:
                     const Environment& environment, float fogStart, float fogEnd,
                     bool useClip, float clipY, bool mirrored);
 
+    void drawGrass(const Mat4& viewProjection, const Vec3& cameraPosition,
+                   const Environment& environment, float fogStart, float fogEnd, float time,
+                   const Vec3& playerPosition);
+
     void drawTransparent(const Mat4& viewProjection, const Vec3& cameraPosition,
                          const Environment& environment, float fogStart, float fogEnd);
 
@@ -42,6 +46,7 @@ public:
     int triangleCount() const { return triangleCount_; }
     int chunkCount() const { return static_cast<int>(meshes_.size()); }
     GLuint shadowTexture() const { return shadowTexture_; }
+    void invalidateShadowMap() { shadowMapValid_ = false; }
 
 private:
     struct Vertex {
@@ -65,22 +70,25 @@ private:
         GLuint vbo = 0;
         GLuint ebo = 0;
         int opaqueIndices = 0;
+        int grassIndices = 0;
         int transparentIndices = 0;
         int waterIndices = 0;
         int triangles = 0;
         Vec3 center{};
+        Aabb bounds{};
         bool hasData = false;
     };
 
     void uploadMesh(ChunkMesh& mesh, const std::vector<Vertex>& vertices,
                     const std::vector<std::uint32_t>& indices, int opaqueIndexCount,
-                    int transparentIndexCount);
+                    int grassIndexCount, int transparentIndexCount);
     void setWorldUniforms(const Mat4& viewProjection, const Vec3& cameraPosition,
                           const Environment& environment, float fogStart, float fogEnd,
                           bool useClip, float clipY);
 
     Shader shader_;
     Shader shadowShader_;
+    Shader grassShader_;
     Shader waterShader_;
     TextureArray* textures_ = nullptr;
     std::vector<ChunkMesh> meshes_;
@@ -90,8 +98,10 @@ private:
 
     GLuint shadowFbo_ = 0;
     GLuint shadowTexture_ = 0;
-    int shadowSize_ = 2048;
+    int shadowSize_ = 4096;
     Mat4 lightViewProjection_;
+    Vec3 lastShadowSun_{};
+    bool shadowMapValid_ = false;
 };
 
 }

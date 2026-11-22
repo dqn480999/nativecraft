@@ -328,6 +328,7 @@ bool BlockRegistry::load(Assets& assets, TextureArray& textures, std::string* er
 
     addWaterOrLava("water", assets, textures);
     addWaterOrLava("lava", assets, textures);
+    addCrossVegetation("tall_grass", assets, textures);
 
     hotbarNames_ = {"grass", "dirt", "stone", "cobblestone", "oak_planks", "oak_log", "sand",
                     "glass", "oak_leaves"};
@@ -422,6 +423,27 @@ bool BlockRegistry::addFromModel(const std::string& name, Assets& assets,
     return true;
 }
 
+bool BlockRegistry::addCrossVegetation(const std::string& name, Assets& assets,
+                                       TextureArray& textures) {
+    if (ids_.find(name) != ids_.end()) {
+        return true;
+    }
+    BlockDef def;
+    def.name = name;
+    def.displayName = lookupDisplayName(name);
+    (void)assets;
+    (void)textures;
+    def.opaque = false;
+    def.solid = false;
+    def.cross = true;
+    for (auto& tint : def.tints) {
+        tint = {0.30f, 0.58f, 0.24f};
+    }
+    ids_[name] = static_cast<int>(blocks_.size());
+    blocks_.push_back(std::move(def));
+    return true;
+}
+
 bool BlockRegistry::addWaterOrLava(const std::string& name, Assets& assets,
                                    TextureArray& textures) {
     if (ids_.find(name) != ids_.end()) {
@@ -485,6 +507,9 @@ int BlockRegistry::textureLayer(Assets& assets, TextureArray& textures,
 std::string BlockRegistry::lookupDisplayName(const std::string& blockName) const {
     if (blockName == "mossy_cobblestone") {
         return "Mossy Cobblestone";
+    }
+    if (blockName == "tall_grass") {
+        return "Tall Grass";
     }
     const auto mapping = kBlockLangKeys.find(blockName);
     if (mapping != kBlockLangKeys.end()) {

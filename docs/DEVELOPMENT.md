@@ -55,18 +55,21 @@ Block loading:
 7. Load the PNG from the jar and append it to the block texture array.
 8. Resolve the display name from `lang/en_us.lang`.
 
-Grass uses a composited side texture built from `grass_side` and a green-tinted `grass_side_overlay`. Animated textures such as water and lava use the first frame of the vertical strip.
+The grass block uses a composited side texture built from `grass_side` and a green-tinted `grass_side_overlay`. Tall grass uses procedurally generated blade quads instead of the tallgrass texture. Animated textures such as water and lava use the first frame of the vertical strip.
 
 ## Rendering passes
 
 Each frame runs these passes:
 
-1. **Shadow map.** Opaque chunks are rendered from the sun direction into a 2048x2048 depth texture. The light matrix uses an orthographic projection that covers the world.
+1. **Shadow map.** Opaque chunks are rendered from the sun direction into a 4096x4096 depth texture. The light matrix uses an orthographic projection that covers the world. The map is cached and only re-rendered when the sun moves or a chunk changes. Sampling uses hardware PCF with a normal-offset bias.
 2. **Reflection.** The scene is rendered from a camera mirrored across the water plane into an offscreen color/depth target. The sky and opaque geometry are included. Geometry below the water plane is clipped.
 3. **Sky.** A fullscreen triangle computes sky gradient, sun disk, moon, stars, and moving clouds from the inverse view-projection matrix.
 4. **Opaque world.** Block textures are lit by sun color, ambient sky/ground, and the shadow map. Glass and ice use a separate transparent pass.
-5. **Water.** Water vertices are displaced by large waves and small ripples. The fragment shader blends deep water color with the planar reflection, applies Fresnel, blurred reflections, sun path, specular highlights, and fog.
-6. **HUD.** Crosshair, hotbar icons, bitmap text, and status lines.
+5. **Grass.** Procedural tapering blade quads are displaced by wind and pushed away from the player. The grass shader samples the shadow map and applies alpha-free blade shading.
+6. **Water.** Water vertices are displaced by large waves and small ripples. The fragment shader blends deep water color with the planar reflection, applies Fresnel, blurred reflections, sun path, specular highlights, and fog.
+7. **HUD.** Crosshair, hotbar icons, bitmap text, and status lines.
+
+All world passes use frustum culling against cached chunk bounds.
 
 ## Lighting model
 
@@ -84,6 +87,7 @@ Each frame runs these passes:
 - A 14-block ocean margin forces the world boundary below sea level, so the visible edge is ocean instead of a cliff.
 - Stone, dirt, grass, coal ore, iron ore, and gravel are placed by depth and hash.
 - Trees are placed deterministically from a position hash on grass above sea level.
+- Tall grass is placed on one third of the grass columns. Each tuft generates 9-13 tapered blades.
 - The world is generated once at startup and kept in memory.
 
 ## Threading
@@ -116,8 +120,8 @@ Verified on:
 - 1280x720
 - About 60 FPS
 - 64 chunks
-- 131040 triangles
-- 78 blocks
+- 241392 triangles
+- 79 blocks
 - 101 textures
 - 103 texture-array layers
 
@@ -129,10 +133,11 @@ Verified on:
 4. Skylight and blocklight propagation.
 5. Entities and mobs.
 6. Networking and the 1.12.2 protocol.
-7. Biomes, structures, chunk streaming, and frustum culling.
+7. Biomes, structures, and chunk streaming.
 8. Weather, cloud shadows, volumetric light shafts, and water depth effects.
-9. Positional audio and music.
-10. Native launcher with version JSON, asset validation, and authentication.
+9. Grass collision, targeting, LOD, and wind animation for tree leaves.
+10. Positional audio and music.
+11. Native launcher with version JSON, asset validation, and authentication.
 
 ## Conventions
 

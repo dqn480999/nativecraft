@@ -121,7 +121,7 @@ Check that `assets/indexes/1.12.json` and `assets/objects/` are present and comp
 
 ### Performance
 
-Shadow mapping uses a 2048x2048 depth map. Water reflections render the scene a second time at the window resolution. Integrated GPUs may need a smaller window size.
+Shadow mapping uses a 4096x4096 depth map with hardware PCF. Water reflections render the scene a second time at the window resolution. Grass uses several hundred thousand triangles in dense areas. Integrated GPUs may need a smaller window size.
 
 ### Wayland
 

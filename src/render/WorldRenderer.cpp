@@ -29,6 +29,77 @@ const int kOffsets[6][3] = {
     {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1},
 };
 
+struct FrustumPlane {
+    Vec3 normal;
+    float distance = 0.0f;
+};
+
+struct Frustum {
+    FrustumPlane planes[6];
+};
+
+Frustum extractFrustum(const Mat4& matrix) {
+    const float* e = matrix.m.data();
+    auto row = [&](int index) {
+        return Vec4{e[index], e[4 + index], e[8 + index], e[12 + index]};
+    };
+    const Vec4 row0 = row(0);
+    const Vec4 row1 = row(1);
+    const Vec4 row2 = row(2);
+    const Vec4 row3 = row(3);
+
+    const Vec4 raw[6] = {
+        {row3.x + row0.x, row3.y + row0.y, row3.z + row0.z, row3.w + row0.w},
+        {row3.x - row0.x, row3.y - row0.y, row3.z - row0.z, row3.w - row0.w},
+        {row3.x + row1.x, row3.y + row1.y, row3.z + row1.z, row3.w + row1.w},
+        {row3.x - row1.x, row3.y - row1.y, row3.z - row1.z, row3.w - row1.w},
+        {row3.x + row2.x, row3.y + row2.y, row3.z + row2.z, row3.w + row2.w},
+        {row3.x - row2.x, row3.y - row2.y, row3.z - row2.z, row3.w - row2.w},
+    };
+
+    Frustum frustum;
+    for (int i = 0; i < 6; ++i) {
+        const float length = std::sqrt(raw[i].x * raw[i].x + raw[i].y * raw[i].y
+                                       + raw[i].z * raw[i].z);
+        const float inverse = length > 0.0f ? 1.0f / length : 0.0f;
+        frustum.planes[i].normal = {raw[i].x * inverse, raw[i].y * inverse,
+                                    raw[i].z * inverse};
+        frustum.planes[i].distance = raw[i].w * inverse;
+    }
+    return frustum;
+}
+
+std::uint32_t hashCoords(int x, int y, int z, std::uint32_t seed) {
+    std::uint64_t value = seed
+                        ^ (static_cast<std::uint64_t>(static_cast<std::uint32_t>(x)) << 32u)
+                        ^ (static_cast<std::uint64_t>(static_cast<std::uint32_t>(z)) << 16u)
+                        ^ static_cast<std::uint32_t>(y);
+    value ^= value >> 33u;
+    value *= 0xff51afd7ed558ccdull;
+    value ^= value >> 33u;
+    value *= 0xc4ceb9fe1a85ec53ull;
+    value ^= value >> 33u;
+    return static_cast<std::uint32_t>(value >> 32u);
+}
+
+float rand01(std::uint32_t value) {
+    return static_cast<float>(value & 0x00FFFFFFu) / 16777216.0f;
+}
+
+bool intersectsFrustum(const Frustum& frustum, const Aabb& bounds) {
+    for (const FrustumPlane& plane : frustum.planes) {
+        const Vec3 positive{
+            plane.normal.x >= 0.0f ? bounds.max.x : bounds.min.x,
+            plane.normal.y >= 0.0f ? bounds.max.y : bounds.min.y,
+            plane.normal.z >= 0.0f ? bounds.max.z : bounds.min.z,
+        };
+        if (dot(plane.normal, positive) + plane.distance < 0.0f) {
+            return false;
+        }
+    }
+    return true;
+}
+
 const char* kWorldVertexShader = R"(
 #version 330 core
 layout(location = 0) in vec3 aPos;
@@ -39,6 +110,7 @@ layout(location = 4) in vec4 aColor;
 
 uniform mat4 uViewProj;
 uniform mat4 uLightVP;
+uniform float uShadowNormalOffset;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
@@ -53,7 +125,7 @@ void main() {
     vNormal = aNormal;
     vUV = vec3(aUV, aLayer);
     vColor = aColor;
-    vShadowCoord = uLightVP * world;
+    vShadowCoord = uLightVP * vec4(aPos + aNormal * uShadowNormalOffset, 1.0);
 }
 )";
 
@@ -66,7 +138,7 @@ in vec4 vColor;
 in vec4 vShadowCoord;
 
 uniform sampler2DArray uAtlas;
-uniform sampler2D uShadowMap;
+uniform sampler2DShadow uShadowMap;
 uniform vec3 uCameraPos;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
@@ -90,13 +162,13 @@ float shadowFactor(vec4 shadowCoord, vec3 normal) {
         || projected.y < 0.0 || projected.y > 1.0) {
         return 1.0;
     }
-    float bias = max(0.0028 * (1.0 - max(dot(normal, uSunDir), 0.0)), 0.0005);
+    float bias = max(0.0008 * (1.0 - max(dot(normal, uSunDir), 0.0)), 0.0002);
     vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
     float sum = 0.0;
     for (int x = -1; x <= 1; ++x) {
         for (int y = -1; y <= 1; ++y) {
-            float depth = texture(uShadowMap, projected.xy + vec2(x, y) * texel).r;
-            sum += (projected.z - bias > depth) ? 0.0 : 1.0;
+            sum += texture(uShadowMap,
+                           vec3(projected.xy + vec2(x, y) * texel, projected.z - bias));
         }
     }
     return sum / 9.0;
@@ -136,6 +208,115 @@ void main() {
 const char* kShadowFragmentShader = R"(
 #version 330 core
 void main() {
+}
+)";
+
+
+const char* kGrassVertexShader = R"(
+#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec2 aUV;
+layout(location = 3) in float aLayer;
+layout(location = 4) in vec4 aColor;
+
+uniform mat4 uViewProj;
+uniform mat4 uLightVP;
+uniform float uShadowNormalOffset;
+uniform float uTime;
+uniform vec3 uWindDir;
+uniform float uWindStrength;
+uniform vec3 uPlayerPos;
+uniform float uPlayerRadius;
+
+out vec3 vWorldPos;
+out vec3 vNormal;
+out vec3 vUV;
+out vec4 vColor;
+out vec4 vShadowCoord;
+
+void main() {
+    float base = floor(aPos.y);
+    float bend = clamp(aPos.y - base, 0.0, 1.0);
+
+    float wave = sin(uTime * 1.7 + aPos.x * 0.55 + aPos.z * 0.42) * 0.55;
+    wave += sin(uTime * 2.9 + aPos.x * 1.1 - aPos.z * 0.8) * 0.25;
+    float gust = 0.6 + 0.4 * sin(uTime * 0.37 + aPos.x * 0.03 + aPos.z * 0.02);
+    vec3 offset = uWindDir * (wave * gust * uWindStrength * bend);
+
+    vec2 toPlayer = aPos.xz - uPlayerPos.xz;
+    float distanceToPlayer = length(toPlayer);
+    float push = smoothstep(uPlayerRadius, uPlayerRadius * 0.15, distanceToPlayer) * bend;
+    if (distanceToPlayer > 0.0001) {
+        offset += vec3(normalize(toPlayer).x, 0.0, normalize(toPlayer).y) * push * 0.8;
+    }
+
+    vec3 position = aPos + offset;
+    position.y -= length(offset) * 0.3;
+
+    vWorldPos = position;
+    vNormal = aNormal;
+    vUV = vec3(aUV, aLayer);
+    vColor = aColor;
+    vShadowCoord = uLightVP * vec4(position + aNormal * uShadowNormalOffset, 1.0);
+    gl_Position = uViewProj * vec4(position, 1.0);
+}
+)";
+
+const char* kGrassFragmentShader = R"(
+#version 330 core
+in vec3 vWorldPos;
+in vec3 vNormal;
+in vec3 vUV;
+in vec4 vColor;
+in vec4 vShadowCoord;
+
+uniform sampler2DShadow uShadowMap;
+uniform vec3 uCameraPos;
+uniform vec3 uSunDir;
+uniform vec3 uSunColor;
+uniform vec3 uAmbientSky;
+uniform vec3 uAmbientGround;
+uniform vec3 uFogColor;
+uniform float uFogStart;
+uniform float uFogEnd;
+uniform float uShadowStrength;
+
+out vec4 FragColor;
+
+float shadowFactor(vec4 shadowCoord, vec3 normal) {
+    if (shadowCoord.w <= 0.0) {
+        return 1.0;
+    }
+    vec3 projected = shadowCoord.xyz / shadowCoord.w * 0.5 + 0.5;
+    if (projected.z > 1.0 || projected.z < 0.0 || projected.x < 0.0 || projected.x > 1.0
+        || projected.y < 0.0 || projected.y > 1.0) {
+        return 1.0;
+    }
+    float bias = max(0.0008 * (1.0 - max(dot(normal, uSunDir), 0.0)), 0.0002);
+    vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
+    float sum = 0.0;
+    for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            sum += texture(uShadowMap,
+                           vec3(projected.xy + vec2(x, y) * texel, projected.z - bias));
+        }
+    }
+    return sum / 9.0;
+}
+
+void main() {
+    vec3 normal = normalize(vNormal);
+    float sun = max(dot(normal, uSunDir), 0.0);
+    float shadow = mix(1.0, shadowFactor(vShadowCoord, normal), uShadowStrength);
+    vec3 ambient = mix(uAmbientGround, uAmbientSky, normal.y * 0.5 + 0.5);
+    vec3 light = ambient * 0.85 + uSunColor * sun * shadow * 0.8;
+    float blade = clamp(1.0 - vUV.y, 0.0, 1.0);
+    vec3 color = vColor.rgb * light * mix(0.42, 1.05, blade);
+    float distanceToCamera = length(vWorldPos - uCameraPos);
+    float fog = clamp((distanceToCamera - uFogStart) / max(0.001, uFogEnd - uFogStart), 0.0, 1.0);
+    color = mix(color, uFogColor, fog);
+    FragColor = vec4(color, 1.0);
 }
 )";
 
@@ -265,18 +446,29 @@ bool WorldRenderer::init(TextureArray& textures, std::string* error) {
     if (!shadowShader_.compile(kShadowVertexShader, kShadowFragmentShader, error)) {
         return false;
     }
+    if (!grassShader_.compile(kGrassVertexShader, kGrassFragmentShader, error)) {
+        return false;
+    }
     if (!waterShader_.compile(kWaterVertexShader, kWaterFragmentShader, error)) {
         return false;
+    }
+
+    GLint maxTextureSize = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+    if (maxTextureSize > 0) {
+        shadowSize_ = std::min(shadowSize_, static_cast<int>(maxTextureSize));
     }
 
     glGenTextures(1, &shadowTexture_);
     glBindTexture(GL_TEXTURE_2D, shadowTexture_);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadowSize_, shadowSize_, 0,
                  GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
     const GLfloat border[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
 
@@ -328,13 +520,15 @@ void WorldRenderer::destroy() {
 
     shader_.destroy();
     shadowShader_.destroy();
+    grassShader_.destroy();
     waterShader_.destroy();
     triangleCount_ = 0;
+    shadowMapValid_ = false;
 }
 
 void WorldRenderer::uploadMesh(ChunkMesh& mesh, const std::vector<Vertex>& vertices,
                                const std::vector<std::uint32_t>& indices, int opaqueIndexCount,
-                               int transparentIndexCount) {
+                               int grassIndexCount, int transparentIndexCount) {
     if (!mesh.vao) {
         gl::GenVertexArrays(1, &mesh.vao);
         gl::GenBuffers(1, &mesh.vbo);
@@ -372,9 +566,10 @@ void WorldRenderer::uploadMesh(ChunkMesh& mesh, const std::vector<Vertex>& verti
     gl::BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
     mesh.opaqueIndices = opaqueIndexCount;
+    mesh.grassIndices = grassIndexCount;
     mesh.transparentIndices = transparentIndexCount;
     mesh.waterIndices = static_cast<int>(indices.size()) - opaqueIndexCount
-                      - transparentIndexCount;
+                      - grassIndexCount - transparentIndexCount;
     mesh.triangles = static_cast<int>(indices.size() / 3);
     mesh.hasData = !indices.empty();
 }
@@ -391,9 +586,11 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
 
     ChunkMesh& mesh = meshes_[static_cast<std::size_t>(index)];
     triangleCount_ -= mesh.triangles;
+    shadowMapValid_ = false;
 
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> opaqueIndices;
+    std::vector<std::uint32_t> grassIndices;
     std::vector<std::uint32_t> transparentIndices;
     std::vector<std::uint32_t> waterIndices;
 
@@ -411,6 +608,85 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
                 }
 
                 const BlockDef& block = registry.def(blockId);
+                if (block.cross) {
+                    const int tintIndex = static_cast<int>(Face::Up);
+                    const float tintRed = block.tints[tintIndex][0];
+                    const float tintGreen = block.tints[tintIndex][1];
+                    const float tintBlue = block.tints[tintIndex][2];
+                    const std::uint32_t blockHash = hashCoords(worldX, y, worldZ, 0x9E3779B9u);
+                    const int bladeCount = 9 + static_cast<int>(blockHash % 5u);
+
+                    for (int blade = 0; blade < bladeCount; ++blade) {
+                        const std::uint32_t h = hashCoords(
+                            worldX, y, worldZ,
+                            blockHash ^ (0x85EBCA6Bu * static_cast<std::uint32_t>(blade + 1)));
+                        const float localX = 0.12f + rand01(h) * 0.76f;
+                        const float localZ = 0.12f + rand01(h ^ 0xC2B2AE35u) * 0.76f;
+                        const float angle = rand01(h ^ 0x27D4EB2Fu) * 2.0f * kPi;
+                        const float height = 0.32f + rand01(h ^ 0x165667B1u) * 0.62f;
+                        const float halfWidth = 0.016f + rand01(h ^ 0x9E3779B9u) * 0.022f;
+                        const float lean = 0.06f + rand01(h ^ 0xD3A2646Cu) * 0.18f;
+                        const float shade = 0.75f + rand01(h ^ 0xFD7046C5u) * 0.45f;
+
+                        const Vec3 basePoint{static_cast<float>(worldX) + localX,
+                                             static_cast<float>(y),
+                                             static_cast<float>(worldZ) + localZ};
+                        const Vec3 side{std::cos(angle) * halfWidth, 0.0f,
+                                        std::sin(angle) * halfWidth};
+                        const Vec3 leanDir{std::sin(angle + 0.8f), 0.0f,
+                                           std::cos(angle + 0.8f)};
+                        const Vec3 midCenter = basePoint
+                                             + Vec3{0.0f, height * 0.55f, 0.0f}
+                                             + leanDir * (lean * height * 0.4f);
+                        const Vec3 topCenter = basePoint
+                                             + Vec3{0.0f, height, 0.0f}
+                                             + leanDir * (lean * height);
+                        const Vec3 sideMid = side * 0.55f;
+                        const Vec3 sideTop = side * 0.18f;
+                        const Vec3 corners[6] = {
+                            basePoint - side, basePoint + side,
+                            midCenter - sideMid, midCenter + sideMid,
+                            topCenter - sideTop, topCenter + sideTop,
+                        };
+                        const float u[6] = {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f};
+                        const float v[6] = {1.0f, 1.0f, 0.45f, 0.45f, 0.0f, 0.0f};
+
+                        const std::uint32_t base =
+                            static_cast<std::uint32_t>(vertices.size());
+                        for (int vertex = 0; vertex < 6; ++vertex) {
+                            Vertex out;
+                            out.x = corners[vertex].x;
+                            out.y = corners[vertex].y;
+                            out.z = corners[vertex].z;
+                            out.nx = 0.0f;
+                            out.ny = 1.0f;
+                            out.nz = 0.0f;
+                            out.u = u[vertex];
+                            out.v = v[vertex];
+                            out.layer = 0.0f;
+                            out.r = tintRed * shade;
+                            out.g = tintGreen * shade;
+                            out.b = tintBlue * shade;
+                            out.a = 1.0f;
+                            vertices.push_back(out);
+                        }
+
+                        grassIndices.push_back(base + 0);
+                        grassIndices.push_back(base + 1);
+                        grassIndices.push_back(base + 3);
+                        grassIndices.push_back(base + 0);
+                        grassIndices.push_back(base + 3);
+                        grassIndices.push_back(base + 2);
+                        grassIndices.push_back(base + 2);
+                        grassIndices.push_back(base + 3);
+                        grassIndices.push_back(base + 5);
+                        grassIndices.push_back(base + 2);
+                        grassIndices.push_back(base + 5);
+                        grassIndices.push_back(base + 4);
+                    }
+                    continue;
+                }
+
                 std::vector<std::uint32_t>* target = &opaqueIndices;
                 if (block.name == "water") {
                     target = &waterIndices;
@@ -472,15 +748,23 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
     }
 
     const int opaqueIndexCount = static_cast<int>(opaqueIndices.size());
+    const int grassIndexCount = static_cast<int>(grassIndices.size());
     const int transparentIndexCount = static_cast<int>(transparentIndices.size());
     std::vector<std::uint32_t> indices;
-    indices.reserve(opaqueIndices.size() + transparentIndices.size() + waterIndices.size());
+    indices.reserve(opaqueIndices.size() + grassIndices.size() + transparentIndices.size()
+                    + waterIndices.size());
     indices.insert(indices.end(), opaqueIndices.begin(), opaqueIndices.end());
+    indices.insert(indices.end(), grassIndices.begin(), grassIndices.end());
     indices.insert(indices.end(), transparentIndices.begin(), transparentIndices.end());
     indices.insert(indices.end(), waterIndices.begin(), waterIndices.end());
 
-    uploadMesh(mesh, vertices, indices, opaqueIndexCount, transparentIndexCount);
+    uploadMesh(mesh, vertices, indices, opaqueIndexCount, grassIndexCount,
+               transparentIndexCount);
     mesh.center = {static_cast<float>(baseX) + 8.0f, 64.0f, static_cast<float>(baseZ) + 8.0f};
+    mesh.bounds = {{static_cast<float>(baseX), 0.0f, static_cast<float>(baseZ)},
+                   {static_cast<float>(baseX + World::kChunkSize),
+                    static_cast<float>(World::kHeight),
+                    static_cast<float>(baseZ + World::kChunkSize)}};
     triangleCount_ += mesh.triangles;
 }
 
@@ -522,6 +806,9 @@ void WorldRenderer::renderShadowMap(const World& world, const BlockRegistry& reg
     if (!shadowFbo_ || meshes_.empty()) {
         return;
     }
+    if (shadowMapValid_ && dot(sunDirection, lastShadowSun_) > 0.99997f) {
+        return;
+    }
 
     const Vec3 center{static_cast<float>(world.width()) * 0.5f, 64.0f,
                       static_cast<float>(world.depth()) * 0.5f};
@@ -551,13 +838,17 @@ void WorldRenderer::renderShadowMap(const World& world, const BlockRegistry& reg
     shadowShader_.use();
     shadowShader_.setMat4("uLightVP", lightViewProjection_);
 
+    const Frustum lightFrustum = extractFrustum(lightViewProjection_);
     for (const auto& mesh : meshes_) {
-        if (mesh.opaqueIndices == 0) {
+        if (mesh.opaqueIndices == 0 || !intersectsFrustum(lightFrustum, mesh.bounds)) {
             continue;
         }
         gl::BindVertexArray(mesh.vao);
         glDrawElements(GL_TRIANGLES, mesh.opaqueIndices, GL_UNSIGNED_INT, nullptr);
     }
+
+    shadowMapValid_ = true;
+    lastShadowSun_ = sunDirection;
 
     glDisable(GL_POLYGON_OFFSET_FILL);
     gl::BindVertexArray(0);
@@ -582,6 +873,7 @@ void WorldRenderer::setWorldUniforms(const Mat4& viewProjection, const Vec3& cam
     shader_.setFloat("uUseClip", useClip ? 1.0f : 0.0f);
     shader_.setFloat("uClipY", clipY);
     shader_.setFloat("uShadowStrength", 0.82f);
+    shader_.setFloat("uShadowNormalOffset", 0.03f);
     shader_.setInt("uAtlas", 0);
     shader_.setInt("uShadowMap", 1);
 }
@@ -609,14 +901,69 @@ void WorldRenderer::drawOpaque(const Mat4& viewProjection, const Vec3& cameraPos
     glFrontFace(mirrored ? GL_CW : GL_CCW);
     glDisable(GL_BLEND);
 
+    const Frustum frustum = extractFrustum(viewProjection);
     for (const auto& mesh : meshes_) {
-        if (mesh.opaqueIndices == 0) {
+        if (mesh.opaqueIndices == 0 || !intersectsFrustum(frustum, mesh.bounds)) {
             continue;
         }
         gl::BindVertexArray(mesh.vao);
         glDrawElements(GL_TRIANGLES, mesh.opaqueIndices, GL_UNSIGNED_INT, nullptr);
     }
 
+    glFrontFace(GL_CCW);
+    gl::BindVertexArray(0);
+    gl::UseProgram(0);
+}
+
+void WorldRenderer::drawGrass(const Mat4& viewProjection, const Vec3& cameraPosition,
+                              const Environment& environment, float fogStart, float fogEnd,
+                              float time, const Vec3& playerPosition) {
+    if (!textures_ || triangleCount_ == 0) {
+        return;
+    }
+
+    grassShader_.use();
+    grassShader_.setMat4("uViewProj", viewProjection);
+    grassShader_.setMat4("uLightVP", lightViewProjection_);
+    grassShader_.setVec3("uCameraPos", cameraPosition);
+    grassShader_.setVec3("uSunDir", environment.sunDirection);
+    grassShader_.setVec3("uSunColor", environment.sunColor);
+    grassShader_.setVec3("uAmbientSky", environment.ambientSky);
+    grassShader_.setVec3("uAmbientGround", environment.ambientGround);
+    grassShader_.setVec3("uFogColor", environment.fogColor);
+    grassShader_.setFloat("uFogStart", fogStart);
+    grassShader_.setFloat("uFogEnd", fogEnd);
+    grassShader_.setFloat("uShadowStrength", 0.82f);
+    grassShader_.setFloat("uShadowNormalOffset", 0.03f);
+    grassShader_.setFloat("uTime", time);
+    grassShader_.setVec3("uWindDir", {0.8f, 0.0f, 0.6f});
+    grassShader_.setFloat("uWindStrength", 0.24f);
+    grassShader_.setVec3("uPlayerPos", playerPosition);
+    grassShader_.setFloat("uPlayerRadius", 1.7f);
+    grassShader_.setInt("uShadowMap", 1);
+
+    gl::ActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, shadowTexture_);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+
+    const Frustum frustum = extractFrustum(viewProjection);
+    for (const auto& mesh : meshes_) {
+        if (mesh.grassIndices == 0 || !intersectsFrustum(frustum, mesh.bounds)) {
+            continue;
+        }
+        gl::BindVertexArray(mesh.vao);
+        const auto offset =
+            static_cast<GLsizeiptr>(mesh.opaqueIndices * sizeof(std::uint32_t));
+        glDrawElements(GL_TRIANGLES, mesh.grassIndices, GL_UNSIGNED_INT,
+                       reinterpret_cast<const void*>(offset));
+    }
+
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
     gl::BindVertexArray(0);
     gl::UseProgram(0);
@@ -629,9 +976,10 @@ void WorldRenderer::drawTransparent(const Mat4& viewProjection, const Vec3& came
         return;
     }
 
+    const Frustum frustum = extractFrustum(viewProjection);
     std::vector<std::pair<float, const ChunkMesh*>> order;
     for (const auto& mesh : meshes_) {
-        if (mesh.transparentIndices == 0) {
+        if (mesh.transparentIndices == 0 || !intersectsFrustum(frustum, mesh.bounds)) {
             continue;
         }
         order.emplace_back(lengthSquared(mesh.center - cameraPosition), &mesh);
@@ -662,8 +1010,8 @@ void WorldRenderer::drawTransparent(const Mat4& viewProjection, const Vec3& came
     for (const auto& [distance, mesh] : order) {
         (void)distance;
         gl::BindVertexArray(mesh->vao);
-        const auto offset =
-            static_cast<GLsizeiptr>(mesh->opaqueIndices * sizeof(std::uint32_t));
+        const auto offset = static_cast<GLsizeiptr>(
+            (mesh->opaqueIndices + mesh->grassIndices) * sizeof(std::uint32_t));
         glDrawElements(GL_TRIANGLES, mesh->transparentIndices, GL_UNSIGNED_INT,
                        reinterpret_cast<const void*>(offset));
     }
@@ -682,9 +1030,10 @@ void WorldRenderer::drawWater(const Mat4& viewProjection, const Vec3& cameraPosi
         return;
     }
 
+    const Frustum frustum = extractFrustum(viewProjection);
     std::vector<std::pair<float, const ChunkMesh*>> order;
     for (const auto& mesh : meshes_) {
-        if (mesh.waterIndices == 0) {
+        if (mesh.waterIndices == 0 || !intersectsFrustum(frustum, mesh.bounds)) {
             continue;
         }
         order.emplace_back(lengthSquared(mesh.center - cameraPosition), &mesh);
@@ -728,7 +1077,8 @@ void WorldRenderer::drawWater(const Mat4& viewProjection, const Vec3& cameraPosi
         (void)distance;
         gl::BindVertexArray(mesh->vao);
         const auto offset = static_cast<GLsizeiptr>(
-            (mesh->opaqueIndices + mesh->transparentIndices) * sizeof(std::uint32_t));
+            (mesh->opaqueIndices + mesh->grassIndices + mesh->transparentIndices)
+            * sizeof(std::uint32_t));
         glDrawElements(GL_TRIANGLES, mesh->waterIndices, GL_UNSIGNED_INT,
                        reinterpret_cast<const void*>(offset));
     }

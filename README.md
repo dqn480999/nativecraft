@@ -8,6 +8,8 @@ Textures, block models, blockstates, the bitmap font, language files, and sounds
 
 ![World](docs/screenshots/world.png)
 
+![Wind and player reactive grass](docs/screenshots/grass.png)
+
 ![Water reflections and waves](docs/screenshots/water.png)
 
 ![Sun](docs/screenshots/sun.png)
@@ -71,13 +73,15 @@ assets/objects/
 ## Rendering features
 
 - Dynamic sun position and day/night cycle.
-- Directional shadow mapping with 3x3 PCF filtering.
+- 4096x4096 directional shadow map with hardware PCF, normal-offset bias, and cached updates.
 - Procedural moving clouds with parallax on a cloud plane.
 - Stars and moon at night.
 - Planar water reflections rendered from a mirrored camera.
 - Animated water waves, ripples, Fresnel reflections, sun path, and specular highlights.
+- Procedural tall grass blades with wind sway and player push interaction.
 - Sky, fog, ambient light, and sun color driven by the time of day.
 - Texture array for block textures, transparent pass for glass and ice.
+- Frustum culling for shadow, reflection, opaque, grass, transparent, and water passes.
 
 ## Offline rendering check
 
@@ -97,8 +101,9 @@ Camera and time override:
 ## Implemented
 
 - 8x8 chunk world (128x128x128) with an ocean margin.
-- 64 chunks and about 131,000 triangles.
-- 78 blocks, 101 unique block textures, 103 texture-array layers.
+- 64 chunks and about 241,000 triangles.
+- 79 blocks, 101 unique block textures, 103 texture-array layers.
+- 9-13 procedural grass blades per tuft with wind and player interaction.
 - Walking, jumping, flight, AABB collision, and mouse look.
 - Block breaking and placement with chunk remeshing.
 - HUD with crosshair, hotbar icons, block names from `en_us.lang`, FPS, coordinates, and time.
@@ -112,6 +117,7 @@ Camera and time override:
 - Only cube-based block models are supported.
 - Animated textures use the first frame.
 - No weather, volumetric lighting, or cloud shadows.
+- Tall grass has no collision and does not cast shadows.
 - Audio is non-positional and limited to footsteps and block sounds.
 - The world is finite and has no chunk streaming or frustum culling.
 
