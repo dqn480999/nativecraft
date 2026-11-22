@@ -107,10 +107,10 @@ All world passes use frustum culling against cached chunk bounds.
 
 ## Software ray tracing test
 
-`--raytrace PATH` renders a 640x360 image with a CPU voxel ray tracer:
+`--raytrace PATH` renders a 1280x720 image with a CPU voxel ray tracer:
 
 - Primary rays use DDA traversal over the chunk map.
-- Hits use average texture colors and per-face tints.
+- Hits sample the original 16x16 block textures with nearest filtering and apply per-face tints.
 - Secondary rays trace toward the sun to test direct shadowing.
 - Rows are distributed across up to 16 worker threads.
 - The test excludes water, vegetation blades, and transparent geometry; it is intended to validate terrain shadows and lighting, not to match the GPU renderer.

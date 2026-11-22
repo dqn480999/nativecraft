@@ -1,5 +1,7 @@
 #include "render/TextureArray.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include "core/Log.hpp"
@@ -103,6 +105,21 @@ bool TextureArray::upload(std::string* error) {
     uploaded_ = true;
     logInfo("texture array uploaded: %d layers of %dx%d", layerCount(), tileSize_, tileSize_);
     return true;
+}
+
+Vec3 TextureArray::sampleNearest(int layer, float u, float v) const {
+    if (layer < 0 || static_cast<std::size_t>(layer) >= layers_.size()) {
+        return {0.5f, 0.5f, 0.5f};
+    }
+    const float wrappedU = u - std::floor(u);
+    const float wrappedV = v - std::floor(v);
+    const int x = std::clamp(static_cast<int>(wrappedU * tileSize_), 0, tileSize_ - 1);
+    const int y = std::clamp(static_cast<int>(wrappedV * tileSize_), 0, tileSize_ - 1);
+    const std::vector<std::uint8_t>& tile = layers_[static_cast<std::size_t>(layer)];
+    const std::size_t index = (static_cast<std::size_t>(y) * tileSize_ + x) * 4;
+    return {static_cast<float>(tile[index]) / 255.0f,
+            static_cast<float>(tile[index + 1]) / 255.0f,
+            static_cast<float>(tile[index + 2]) / 255.0f};
 }
 
 Vec3 TextureArray::averageColor(int layer) const {

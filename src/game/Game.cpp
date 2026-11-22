@@ -786,8 +786,8 @@ void Game::takeScreenshot(const std::string& path) {
 }
 
 void Game::renderRaytrace(const std::string& path) {
-    constexpr int width = 640;
-    constexpr int height = 360;
+    constexpr int width = 1280;
+    constexpr int height = 720;
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4);
 
     const Vec3 eye = player_.eye();
@@ -829,7 +829,39 @@ void Game::renderRaytrace(const std::string& path) {
                     const BlockDef& block = blocks_.def(blockId);
                     const int faceIndex = hit.face;
                     const int layer = block.layers[static_cast<std::size_t>(faceIndex)];
-                    const Vec3 base = textures_.averageColor(layer);
+                    const Vec3 point = eye + direction * hit.distance;
+                    const Vec3 local{point.x - static_cast<float>(hit.x),
+                                     point.y - static_cast<float>(hit.y),
+                                     point.z - static_cast<float>(hit.z)};
+                    float u = 0.0f;
+                    float v = 0.0f;
+                    switch (faceIndex) {
+                    case 0:
+                        u = 1.0f - local.z;
+                        v = 1.0f - local.y;
+                        break;
+                    case 1:
+                        u = local.z;
+                        v = 1.0f - local.y;
+                        break;
+                    case 2:
+                        u = local.x;
+                        v = 1.0f - local.z;
+                        break;
+                    case 3:
+                        u = local.x;
+                        v = local.z;
+                        break;
+                    case 4:
+                        u = local.x;
+                        v = 1.0f - local.y;
+                        break;
+                    default:
+                        u = 1.0f - local.x;
+                        v = 1.0f - local.y;
+                        break;
+                    }
+                    const Vec3 base = textures_.sampleNearest(layer, u, v);
                     Vec3 albedo{
                         base.x * block.tints[static_cast<std::size_t>(faceIndex)][0],
                         base.y * block.tints[static_cast<std::size_t>(faceIndex)][1],

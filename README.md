@@ -67,7 +67,7 @@ Useful options:
 --time-speed S          day cycle speed
 --camera X Y Z YAW PITCH
 --screenshot PATH
---raytrace PATH         software ray tracing test render, 640x360
+--raytrace PATH         software ray tracing test render, 1280x720
 --frames N
 ```
 
@@ -119,7 +119,7 @@ Useful options:
 - No weather, volumetric lighting, or cloud shadows.
 - Tall grass has no collision. Its shadows are limited to the near shadow cascade (22 blocks).
 - Chunk generation and disk loading are multithreaded; mesh building and OpenGL uploads remain on the render thread and are budgeted per frame.
-- The software ray tracing test uses flat average texture colors and voxel geometry; it does not render individual grass blades.
+- The software ray tracing test samples the original block textures at 1280x720 with nearest filtering. It still uses voxel geometry and does not render individual grass blades.
 - Grass LOD changes can pop when chunks cross the grass radius.
 - Meshes are rebuilt from chunk data and are not stored on disk.
 

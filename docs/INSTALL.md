@@ -83,7 +83,7 @@ Optional arguments:
 --time-speed S            time advance per second, default 0.0025
 --camera X Y Z YAW PITCH  override the camera
 --screenshot PATH         render a PNG and exit
---raytrace PATH           software ray tracing test render, 640x360
+--raytrace PATH           software ray tracing test render, 1280x720
 --frames N                frames to render before the screenshot
 --help                    show usage
 ```

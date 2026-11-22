@@ -22,6 +22,7 @@ public:
     int tileSize() const { return tileSize_; }
     bool hasLayer(int layer) const { return layer >= 0 && layer < layerCount(); }
     Vec3 averageColor(int layer) const;
+    Vec3 sampleNearest(int layer, float u, float v) const;
 
 private:
     int tileSize_ = 16;
