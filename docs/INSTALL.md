@@ -76,6 +76,8 @@ Optional arguments:
 --width N                 window width, default 1280
 --height N                window height, default 720
 --seed N                  world seed, default 12345
+--render-distance N       chunk render radius, default 6
+--grass-distance N        radius with grass meshes, default 3
 --time T                  time of day in [0,1], default 0.32
 --time-speed S            time advance per second, default 0.0025
 --camera X Y Z YAW PITCH  override the camera
@@ -119,9 +121,13 @@ OpenAL must find a working audio device. The client continues without audio if O
 
 Check that `assets/indexes/1.12.json` and `assets/objects/` are present and complete. Re-download the assets with the official launcher if needed.
 
+### Save files
+
+Modified chunks are written to `saves/<seed>/chunks/<x>_<z>.nc`. Unmodified chunks are regenerated from the seed. Delete the seed directory to reset a world.
+
 ### Performance
 
-Shadow mapping uses a 4096x4096 depth map with hardware PCF. Water reflections render the scene a second time at the window resolution. Grass uses several hundred thousand triangles in dense areas. Integrated GPUs may need a smaller window size.
+Shadow mapping uses a 4096x4096 depth map with hardware PCF. Water reflections render the scene a second time at the window resolution. The default render radius of 6 chunks keeps more than 200 chunks loaded and about 400,000 triangles in view. Reduce `--render-distance` and `--grass-distance` on slower GPUs.
 
 ### Wayland
 

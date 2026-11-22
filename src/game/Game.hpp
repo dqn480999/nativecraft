@@ -30,6 +30,8 @@ struct GameOptions {
     int screenshotFrames = 0;
     float timeOfDay = 0.32f;
     float timeSpeed = 0.0025f;
+    int renderDistance = 6;
+    int grassDistance = 3;
     bool hasCamera = false;
     Vec3 cameraPosition{};
     float cameraYaw = 0.0f;
@@ -75,6 +77,10 @@ private:
     float elapsedTime_ = 0.0f;
     float waterLevel_ = 56.0f;
     bool timePaused_ = false;
+    Vec3 windDirection_{0.8f, 0.0f, 0.6f};
+    float windStrength_ = 0.24f;
+    ChunkPos lastStreamCenter_{};
+    bool hasStreamCenter_ = false;
 
     std::vector<int> hotbar_;
     int selectedSlot_ = 0;

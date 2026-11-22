@@ -1,12 +1,29 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "core/Math.hpp"
 #include "world/Blocks.hpp"
 
 namespace nc {
+
+struct ChunkPos {
+    int x = 0;
+    int z = 0;
+
+    bool operator==(const ChunkPos& other) const {
+        return x == other.x && z == other.z;
+    }
+};
+
+struct ChunkPosHash {
+    std::size_t operator()(const ChunkPos& pos) const noexcept;
+};
 
 class World {
 public:
@@ -15,34 +32,48 @@ public:
     static constexpr int kSeaLevel = 56;
     static constexpr int kChunkVolume = kChunkSize * kChunkSize * kHeight;
 
-    World(int chunksX, int chunksZ, std::uint64_t seed);
+    World(std::uint64_t seed, std::string saveDirectory = {});
+    ~World();
 
-    void generate(const BlockRegistry& registry);
+    void updateStreaming(const Vec3& playerPosition, int radius,
+                         const BlockRegistry& registry);
 
     std::uint8_t get(int x, int y, int z) const;
     void set(int x, int y, int z, std::uint8_t block);
+    int surfaceY(int x, int z) const;
 
-    int chunksX() const { return chunksX_; }
-    int chunksZ() const { return chunksZ_; }
-    int width() const { return chunksX_ * kChunkSize; }
-    int depth() const { return chunksZ_ * kChunkSize; }
+    bool isChunkLoaded(const ChunkPos& pos) const;
+    std::vector<ChunkPos> loadedChunks() const;
     std::uint64_t seed() const { return seed_; }
 
-    int surfaceY(int x, int z) const;
+    static ChunkPos chunkOf(int x, int z);
+    static int chunkCoord(int worldCoord);
+    static int localCoord(int worldCoord);
+
+    void saveAll();
+    void saveChunkIfModified(const ChunkPos& pos);
+    void unload(const ChunkPos& pos);
 
 private:
     struct Chunk {
         std::array<std::uint8_t, kChunkVolume> blocks{};
+        bool generated = false;
+        bool modified = false;
     };
 
     static int localIndex(int x, int y, int z);
-    int chunkIndex(int chunkX, int chunkZ) const;
-    bool inside(int x, int z) const;
+    static int floorDiv(int value, int divisor);
+    Chunk* findChunk(const ChunkPos& pos);
+    const Chunk* findChunk(const ChunkPos& pos) const;
+    Chunk& ensureChunk(const ChunkPos& pos, const BlockRegistry& registry);
+    void generateChunk(const ChunkPos& pos, Chunk& chunk, const BlockRegistry& registry);
+    bool loadChunk(const ChunkPos& pos, Chunk& chunk);
+    void saveChunk(const ChunkPos& pos, const Chunk& chunk);
+    std::string chunkFilePath(const ChunkPos& pos) const;
 
-    int chunksX_ = 0;
-    int chunksZ_ = 0;
     std::uint64_t seed_ = 0;
-    std::vector<Chunk> chunks_;
+    std::string saveDirectory_;
+    std::unordered_map<ChunkPos, Chunk, ChunkPosHash> chunks_;
 };
 
 }

@@ -2,12 +2,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <utility>
 
 #include "core/Log.hpp"
-#include "core/Math.hpp"
 
 namespace nc {
 namespace {
+
+constexpr std::uint32_t kChunkMagic = 0x3148434Eu;
+constexpr std::uint32_t kChunkVersion = 1;
 
 std::uint64_t splitmix64(std::uint64_t value) {
     value += 0x9E3779B97F4A7C15ull;
@@ -61,7 +66,8 @@ float fbm(float x, float z, std::uint64_t seed, int octaves) {
     float total = 0.0f;
     float normalizer = 0.0f;
     for (int i = 0; i < octaves; ++i) {
-        total += valueNoise(x * frequency, z * frequency, seed + static_cast<std::uint64_t>(i) * 7919ull)
+        total += valueNoise(x * frequency, z * frequency,
+                            seed + static_cast<std::uint64_t>(i) * 7919ull)
                * amplitude;
         normalizer += amplitude;
         amplitude *= 0.5f;
@@ -72,66 +78,197 @@ float fbm(float x, float z, std::uint64_t seed, int octaves) {
 
 }
 
-World::World(int chunksX, int chunksZ, std::uint64_t seed)
-    : chunksX_(std::max(1, chunksX))
-    , chunksZ_(std::max(1, chunksZ))
-    , seed_(seed) {
-    chunks_.resize(static_cast<std::size_t>(chunksX_) * chunksZ_);
+std::size_t ChunkPosHash::operator()(const ChunkPos& pos) const noexcept {
+    std::uint64_t value = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(pos.x)) << 32u)
+                        ^ static_cast<std::uint32_t>(pos.z);
+    value ^= value >> 33u;
+    value *= 0xff51afd7ed558ccdull;
+    value ^= value >> 33u;
+    return static_cast<std::size_t>(value >> 32u);
+}
+
+World::World(std::uint64_t seed, std::string saveDirectory)
+    : seed_(seed)
+    , saveDirectory_(std::move(saveDirectory)) {
+}
+
+World::~World() {
+    saveAll();
+}
+
+int World::floorDiv(int value, int divisor) {
+    const int quotient = value / divisor;
+    const int remainder = value % divisor;
+    return remainder < 0 ? quotient - 1 : quotient;
+}
+
+int World::chunkCoord(int worldCoord) {
+    return floorDiv(worldCoord, kChunkSize);
+}
+
+int World::localCoord(int worldCoord) {
+    const int remainder = worldCoord % kChunkSize;
+    return remainder < 0 ? remainder + kChunkSize : remainder;
+}
+
+ChunkPos World::chunkOf(int x, int z) {
+    return {chunkCoord(x), chunkCoord(z)};
 }
 
 int World::localIndex(int x, int y, int z) {
     return (y * kChunkSize + z) * kChunkSize + x;
 }
 
-int World::chunkIndex(int chunkX, int chunkZ) const {
-    return chunkZ * chunksX_ + chunkX;
+World::Chunk* World::findChunk(const ChunkPos& pos) {
+    const auto it = chunks_.find(pos);
+    return it == chunks_.end() ? nullptr : &it->second;
 }
 
-bool World::inside(int x, int z) const {
-    return x >= 0 && z >= 0 && x < width() && z < depth();
+const World::Chunk* World::findChunk(const ChunkPos& pos) const {
+    const auto it = chunks_.find(pos);
+    return it == chunks_.end() ? nullptr : &it->second;
 }
 
-std::uint8_t World::get(int x, int y, int z) const {
-    if (y < 0) {
-        return 1;
-    }
-    if (y >= kHeight || !inside(x, z)) {
-        return 0;
-    }
-    const int chunkX = x / kChunkSize;
-    const int chunkZ = z / kChunkSize;
-    const int localX = x % kChunkSize;
-    const int localZ = z % kChunkSize;
-    return chunks_[static_cast<std::size_t>(chunkIndex(chunkX, chunkZ))]
-        .blocks[static_cast<std::size_t>(localIndex(localX, y, localZ))];
+bool World::isChunkLoaded(const ChunkPos& pos) const {
+    const Chunk* chunk = findChunk(pos);
+    return chunk != nullptr && chunk->generated;
 }
 
-void World::set(int x, int y, int z, std::uint8_t block) {
-    if (y < 0 || y >= kHeight || !inside(x, z)) {
-        return;
-    }
-    const int chunkX = x / kChunkSize;
-    const int chunkZ = z / kChunkSize;
-    const int localX = x % kChunkSize;
-    const int localZ = z % kChunkSize;
-    chunks_[static_cast<std::size_t>(chunkIndex(chunkX, chunkZ))]
-        .blocks[static_cast<std::size_t>(localIndex(localX, y, localZ))] = block;
-}
-
-int World::surfaceY(int x, int z) const {
-    if (!inside(x, z)) {
-        return 0;
-    }
-    for (int y = kHeight - 1; y >= 0; --y) {
-        const std::uint8_t block = get(x, y, z);
-        if (block != 0) {
-            return y;
+std::vector<ChunkPos> World::loadedChunks() const {
+    std::vector<ChunkPos> result;
+    result.reserve(chunks_.size());
+    for (const auto& [pos, chunk] : chunks_) {
+        if (chunk.generated) {
+            result.push_back(pos);
         }
     }
-    return 0;
+    return result;
 }
 
-void World::generate(const BlockRegistry& registry) {
+std::string World::chunkFilePath(const ChunkPos& pos) const {
+    if (saveDirectory_.empty()) {
+        return {};
+    }
+    return saveDirectory_ + "/chunks/" + std::to_string(pos.x) + "_"
+         + std::to_string(pos.z) + ".nc";
+}
+
+bool World::loadChunk(const ChunkPos& pos, Chunk& chunk) {
+    const std::string path = chunkFilePath(pos);
+    if (path.empty()) {
+        return false;
+    }
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        return false;
+    }
+
+    std::uint32_t magic = 0;
+    std::uint32_t version = 0;
+    std::int32_t x = 0;
+    std::int32_t z = 0;
+    std::uint32_t volume = 0;
+    file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    file.read(reinterpret_cast<char*>(&version), sizeof(version));
+    file.read(reinterpret_cast<char*>(&x), sizeof(x));
+    file.read(reinterpret_cast<char*>(&z), sizeof(z));
+    file.read(reinterpret_cast<char*>(&volume), sizeof(volume));
+    if (!file || magic != kChunkMagic || version != kChunkVersion || x != pos.x
+        || z != pos.z || volume != kChunkVolume) {
+        return false;
+    }
+    file.read(reinterpret_cast<char*>(chunk.blocks.data()), kChunkVolume);
+    if (!file) {
+        return false;
+    }
+    chunk.generated = true;
+    chunk.modified = false;
+    logInfo("loaded chunk %d,%d from disk", pos.x, pos.z);
+    return true;
+}
+
+void World::saveChunk(const ChunkPos& pos, const Chunk& chunk) {
+    const std::string path = chunkFilePath(pos);
+    if (path.empty()) {
+        return;
+    }
+    std::error_code error;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), error);
+    if (error) {
+        logWarn("cannot create chunk directory: %s", error.message().c_str());
+        return;
+    }
+
+    const std::string temporary = path + ".tmp";
+    std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        logWarn("cannot write chunk file: %s", temporary.c_str());
+        return;
+    }
+    const std::int32_t x = pos.x;
+    const std::int32_t z = pos.z;
+    const std::uint32_t volume = kChunkVolume;
+    file.write(reinterpret_cast<const char*>(&kChunkMagic), sizeof(kChunkMagic));
+    file.write(reinterpret_cast<const char*>(&kChunkVersion), sizeof(kChunkVersion));
+    file.write(reinterpret_cast<const char*>(&x), sizeof(x));
+    file.write(reinterpret_cast<const char*>(&z), sizeof(z));
+    file.write(reinterpret_cast<const char*>(&volume), sizeof(volume));
+    file.write(reinterpret_cast<const char*>(chunk.blocks.data()), kChunkVolume);
+    file.close();
+    if (!file) {
+        logWarn("failed to write chunk file: %s", temporary.c_str());
+        return;
+    }
+
+    std::filesystem::rename(temporary, path, error);
+    if (error) {
+        logWarn("cannot rename chunk file: %s", error.message().c_str());
+    }
+}
+
+void World::saveChunkIfModified(const ChunkPos& pos) {
+    const Chunk* chunk = findChunk(pos);
+    if (chunk && chunk->generated && chunk->modified) {
+        saveChunk(pos, *chunk);
+    }
+}
+
+void World::unload(const ChunkPos& pos) {
+    const auto it = chunks_.find(pos);
+    if (it == chunks_.end()) {
+        return;
+    }
+    if (it->second.modified) {
+        saveChunk(pos, it->second);
+    }
+    chunks_.erase(it);
+}
+
+void World::saveAll() {
+    for (auto& [pos, chunk] : chunks_) {
+        if (chunk.generated && chunk.modified) {
+            saveChunk(pos, chunk);
+            chunk.modified = false;
+        }
+    }
+}
+
+World::Chunk& World::ensureChunk(const ChunkPos& pos, const BlockRegistry& registry) {
+    const auto existing = chunks_.find(pos);
+    if (existing != chunks_.end()) {
+        return existing->second;
+    }
+
+    Chunk chunk;
+    if (!loadChunk(pos, chunk)) {
+        generateChunk(pos, chunk, registry);
+    }
+    const auto [it, inserted] = chunks_.emplace(pos, std::move(chunk));
+    (void)inserted;
+    return it->second;
+}
+
+void World::generateChunk(const ChunkPos& pos, Chunk& chunk, const BlockRegistry& registry) {
     const int stone = registry.id("stone");
     const int dirt = registry.id("dirt");
     const int grass = registry.id("grass");
@@ -140,78 +277,81 @@ void World::generate(const BlockRegistry& registry) {
     const int bedrock = registry.id("bedrock");
     const int coal = registry.id("coal_ore");
     const int iron = registry.id("iron_ore");
+    const int gravel = registry.id("gravel");
     const int log = registry.id("oak_log");
     const int leaves = registry.id("oak_leaves");
-    const int gravel = registry.id("gravel");
+    const int tallGrass = registry.id("tall_grass");
+    const int meadowGrass = registry.id("meadow_grass");
+    const int dryGrass = registry.id("dry_grass");
+    const int fern = registry.id("fern");
 
-    constexpr int seaLevel = kSeaLevel;
-    const int width = this->width();
-    const int depth = this->depth();
+    std::array<int, kChunkSize * kChunkSize> heights{};
+    const int baseX = pos.x * kChunkSize;
+    const int baseZ = pos.z * kChunkSize;
 
-    for (int z = 0; z < depth; ++z) {
-        for (int x = 0; x < width; ++x) {
-            const float base = fbm(static_cast<float>(x) * 0.014f, static_cast<float>(z) * 0.014f,
-                                   seed_, 4);
-            const float detail = fbm(static_cast<float>(x) * 0.06f, static_cast<float>(z) * 0.06f,
+    for (int localZ = 0; localZ < kChunkSize; ++localZ) {
+        for (int localX = 0; localX < kChunkSize; ++localX) {
+            const int worldX = baseX + localX;
+            const int worldZ = baseZ + localZ;
+            const float base = fbm(static_cast<float>(worldX) * 0.014f,
+                                   static_cast<float>(worldZ) * 0.014f, seed_, 4);
+            const float detail = fbm(static_cast<float>(worldX) * 0.06f,
+                                     static_cast<float>(worldZ) * 0.06f,
                                      seed_ ^ 0xA5A5A5A5ull, 3);
-            int height = 44 + static_cast<int>(base * 24.0f) + static_cast<int>(detail * 7.0f);
-            const int margin = std::min(std::min(x, width - 1 - x), std::min(z, depth - 1 - z));
-            if (margin < 14) {
-                const float blend = 1.0f - static_cast<float>(margin) / 14.0f;
-                height = static_cast<int>(lerpf(static_cast<float>(height),
-                                                static_cast<float>(seaLevel - 9), blend));
-            }
+            int height = 50 + static_cast<int>(base * 20.0f)
+                       + static_cast<int>(detail * 6.0f);
             height = std::clamp(height, 8, kHeight - 12);
+            heights[localZ * kChunkSize + localX] = height;
 
-            const bool beach = height <= seaLevel + 1;
+            const bool beach = height <= kSeaLevel + 1;
             for (int y = 0; y < kHeight; ++y) {
                 int block = 0;
                 if (y == 0) {
                     block = bedrock;
                 } else if (y < height - 4) {
                     block = stone;
-                    const std::uint32_t ore = hash3(x, y, z, seed_ ^ 0x12345678ull);
-                    if (ore % 1409u == 0) {
+                    const std::uint32_t ore = hash3(worldX, y, worldZ, seed_ ^ 0x12345678ull);
+                    if (ore % 1409u == 0u) {
                         block = coal;
-                    } else if (ore % 2803u == 0) {
+                    } else if (ore % 2803u == 0u) {
                         block = iron;
-                    } else if (ore % 4099u == 0) {
+                    } else if (ore % 4099u == 0u) {
                         block = gravel;
                     }
                 } else if (y < height - 1) {
                     block = beach ? sand : dirt;
                 } else if (y == height - 1) {
-                    if (height <= seaLevel) {
-                        block = sand;
-                    } else if (beach) {
-                        block = sand;
-                    } else {
-                        block = grass;
-                    }
-                } else if (y < seaLevel) {
+                    block = (height <= kSeaLevel || beach) ? sand : grass;
+                } else if (y < kSeaLevel) {
                     block = water;
                 }
                 if (block != 0) {
-                    set(x, y, z, static_cast<std::uint8_t>(block));
+                    chunk.blocks[static_cast<std::size_t>(localIndex(localX, y, localZ))] =
+                        static_cast<std::uint8_t>(block);
                 }
             }
         }
     }
 
-    for (int z = 3; z < depth - 3; ++z) {
-        for (int x = 3; x < width - 3; ++x) {
-            const std::uint32_t treeHash = hash3(x, 0, z, seed_ ^ 0xC0FFEEull);
-            if (treeHash % 233u != 0) {
+    for (int localZ = 3; localZ < kChunkSize - 3; ++localZ) {
+        for (int localX = 3; localX < kChunkSize - 3; ++localX) {
+            const int worldX = baseX + localX;
+            const int worldZ = baseZ + localZ;
+            const std::uint32_t treeHash = hash3(worldX, 0, worldZ, seed_ ^ 0xC0FFEEull);
+            if (treeHash % 233u != 0u) {
                 continue;
             }
-            const int ground = surfaceY(x, z);
-            if (ground + 8 >= kHeight || get(x, ground, z) != grass) {
+            const int ground = heights[localZ * kChunkSize + localX] - 1;
+            if (ground + 9 >= kHeight
+                || chunk.blocks[static_cast<std::size_t>(localIndex(localX, ground, localZ))]
+                       != grass) {
                 continue;
             }
 
             const int trunkHeight = 4 + static_cast<int>((treeHash >> 8u) % 3u);
             for (int i = 1; i <= trunkHeight; ++i) {
-                set(x, ground + i, z, static_cast<std::uint8_t>(log));
+                chunk.blocks[static_cast<std::size_t>(localIndex(localX, ground + i, localZ))] =
+                    static_cast<std::uint8_t>(log);
             }
 
             for (int dy = -2; dy <= 2; ++dy) {
@@ -221,11 +361,17 @@ void World::generate(const BlockRegistry& registry) {
                         if (std::abs(dx) + std::abs(dz) + std::abs(dy) > 3) {
                             continue;
                         }
-                        const int lx = x + dx;
+                        const int lx = localX + dx;
                         const int ly = ground + trunkHeight + dy;
-                        const int lz = z + dz;
-                        if (get(lx, ly, lz) == 0) {
-                            set(lx, ly, lz, static_cast<std::uint8_t>(leaves));
+                        const int lz = localZ + dz;
+                        if (lx < 0 || lx >= kChunkSize || lz < 0 || lz >= kChunkSize
+                            || ly < 0 || ly >= kHeight) {
+                            continue;
+                        }
+                        std::uint8_t& target =
+                            chunk.blocks[static_cast<std::size_t>(localIndex(lx, ly, lz))];
+                        if (target == 0) {
+                            target = static_cast<std::uint8_t>(leaves);
                         }
                     }
                 }
@@ -233,25 +379,136 @@ void World::generate(const BlockRegistry& registry) {
         }
     }
 
-    const int tallGrass = registry.id("tall_grass");
-    if (tallGrass > 0) {
-        for (int z = 2; z < depth - 2; ++z) {
-            for (int x = 2; x < width - 2; ++x) {
-                if (hash3(x, 1, z, seed_ ^ 0x51A55ull) % 3u != 0u) {
-                    continue;
-                }
-                const int surface = surfaceY(x, z);
-                if (surface + 1 >= kHeight || get(x, surface, z) != grass
-                    || get(x, surface + 1, z) != 0) {
-                    continue;
-                }
-                set(x, surface + 1, z, static_cast<std::uint8_t>(tallGrass));
+    for (int localZ = 1; localZ < kChunkSize - 1; ++localZ) {
+        for (int localX = 1; localX < kChunkSize - 1; ++localX) {
+            const int worldX = baseX + localX;
+            const int worldZ = baseZ + localZ;
+            if (hash3(worldX, 1, worldZ, seed_ ^ 0x51A55ull) % 3u == 0u) {
+                continue;
+            }
+            const int ground = heights[localZ * kChunkSize + localX] - 1;
+            if (ground < 1 || ground + 1 >= kHeight) {
+                continue;
+            }
+            if (chunk.blocks[static_cast<std::size_t>(localIndex(localX, ground, localZ))]
+                    != grass
+                || chunk.blocks[static_cast<std::size_t>(
+                       localIndex(localX, ground + 1, localZ))]
+                       != 0) {
+                continue;
+            }
+
+            const float biome = fbm(static_cast<float>(worldX) * 0.014f,
+                                    static_cast<float>(worldZ) * 0.014f,
+                                    seed_ ^ 0xB10Eull, 3);
+            int vegetation = tallGrass;
+            if (biome < 0.32f) {
+                vegetation = dryGrass;
+            } else if (biome < 0.55f) {
+                vegetation = tallGrass;
+            } else if (biome < 0.78f) {
+                vegetation = meadowGrass;
+            } else {
+                vegetation = fern;
+            }
+
+            const std::uint32_t grassHash = hash3(worldX, 2, worldZ, seed_ ^ 0xA11CEull);
+            if (grassHash % 11u == 0u) {
+                vegetation = dryGrass;
+            } else if (grassHash % 13u == 0u) {
+                vegetation = meadowGrass;
+            } else if (grassHash % 17u == 0u) {
+                vegetation = fern;
+            }
+            if (vegetation <= 0) {
+                vegetation = tallGrass;
+            }
+            if (vegetation > 0) {
+                chunk.blocks[static_cast<std::size_t>(
+                    localIndex(localX, ground + 1, localZ))] =
+                    static_cast<std::uint8_t>(vegetation);
             }
         }
     }
 
-    logInfo("world generated: %dx%dx%d, seed=%llu", width, kHeight, depth,
-            static_cast<unsigned long long>(seed_));
+    chunk.generated = true;
+    chunk.modified = false;
+}
+
+void World::updateStreaming(const Vec3& playerPosition, int radius,
+                            const BlockRegistry& registry) {
+    radius = std::max(1, radius);
+    const int playerX = static_cast<int>(std::floor(playerPosition.x));
+    const int playerZ = static_cast<int>(std::floor(playerPosition.z));
+    const ChunkPos center = chunkOf(playerX, playerZ);
+    const int generateRadius = radius + 1;
+
+    int created = 0;
+    for (int dz = -generateRadius; dz <= generateRadius; ++dz) {
+        for (int dx = -generateRadius; dx <= generateRadius; ++dx) {
+            const ChunkPos pos{center.x + dx, center.z + dz};
+            if (chunks_.find(pos) == chunks_.end()) {
+                ensureChunk(pos, registry);
+                ++created;
+            }
+        }
+    }
+
+    std::vector<ChunkPos> toUnload;
+    for (const auto& [pos, chunk] : chunks_) {
+        (void)chunk;
+        if (std::abs(pos.x - center.x) > radius + 2
+            || std::abs(pos.z - center.z) > radius + 2) {
+            toUnload.push_back(pos);
+        }
+    }
+    for (const ChunkPos& pos : toUnload) {
+        unload(pos);
+    }
+
+    if (created > 0) {
+        logInfo("streaming: +%d chunks, loaded=%zu, center=%d,%d", created, chunks_.size(),
+                center.x, center.z);
+    }
+}
+
+std::uint8_t World::get(int x, int y, int z) const {
+    if (y < 0) {
+        return 1;
+    }
+    if (y >= kHeight) {
+        return 0;
+    }
+    const ChunkPos pos = chunkOf(x, z);
+    const Chunk* chunk = findChunk(pos);
+    if (!chunk || !chunk->generated) {
+        return 0;
+    }
+    return chunk->blocks[static_cast<std::size_t>(
+        localIndex(localCoord(x), y, localCoord(z)))];
+}
+
+void World::set(int x, int y, int z, std::uint8_t block) {
+    if (y < 0 || y >= kHeight) {
+        return;
+    }
+    const ChunkPos pos = chunkOf(x, z);
+    Chunk* chunk = findChunk(pos);
+    if (!chunk || !chunk->generated) {
+        return;
+    }
+    chunk->blocks[static_cast<std::size_t>(localIndex(localCoord(x), y, localCoord(z)))] =
+        block;
+    chunk->modified = true;
+}
+
+int World::surfaceY(int x, int z) const {
+    for (int y = kHeight - 1; y >= 0; --y) {
+        if (get(x, y, z) != 0) {
+            return y;
+        }
+    }
+    return 0;
 }
 
 }

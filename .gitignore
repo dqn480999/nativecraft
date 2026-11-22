@@ -5,3 +5,4 @@
 *.a
 *.d
 compile_commands.json
+saves/

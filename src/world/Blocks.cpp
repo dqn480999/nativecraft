@@ -328,7 +328,10 @@ bool BlockRegistry::load(Assets& assets, TextureArray& textures, std::string* er
 
     addWaterOrLava("water", assets, textures);
     addWaterOrLava("lava", assets, textures);
-    addCrossVegetation("tall_grass", assets, textures);
+    addCrossVegetation("tall_grass", {0.30f, 0.58f, 0.24f}, 10, 14, 0.35f, 0.95f);
+    addCrossVegetation("meadow_grass", {0.40f, 0.72f, 0.18f}, 14, 20, 0.30f, 0.85f);
+    addCrossVegetation("dry_grass", {0.60f, 0.50f, 0.18f}, 9, 13, 0.20f, 0.62f);
+    addCrossVegetation("fern", {0.14f, 0.38f, 0.12f}, 12, 17, 0.40f, 1.05f);
 
     hotbarNames_ = {"grass", "dirt", "stone", "cobblestone", "oak_planks", "oak_log", "sand",
                     "glass", "oak_leaves"};
@@ -423,22 +426,25 @@ bool BlockRegistry::addFromModel(const std::string& name, Assets& assets,
     return true;
 }
 
-bool BlockRegistry::addCrossVegetation(const std::string& name, Assets& assets,
-                                       TextureArray& textures) {
+bool BlockRegistry::addCrossVegetation(const std::string& name, const Vec3& tint,
+                                       int bladeMin, int bladeMax, float heightMin,
+                                       float heightMax) {
     if (ids_.find(name) != ids_.end()) {
         return true;
     }
     BlockDef def;
     def.name = name;
     def.displayName = lookupDisplayName(name);
-    (void)assets;
-    (void)textures;
     def.opaque = false;
     def.solid = false;
     def.cross = true;
-    for (auto& tint : def.tints) {
-        tint = {0.30f, 0.58f, 0.24f};
+    for (auto& faceTint : def.tints) {
+        faceTint = {tint.x, tint.y, tint.z};
     }
+    def.grassBladeMin = bladeMin;
+    def.grassBladeMax = bladeMax;
+    def.grassHeightMin = heightMin;
+    def.grassHeightMax = heightMax;
     ids_[name] = static_cast<int>(blocks_.size());
     blocks_.push_back(std::move(def));
     return true;
@@ -510,6 +516,15 @@ std::string BlockRegistry::lookupDisplayName(const std::string& blockName) const
     }
     if (blockName == "tall_grass") {
         return "Tall Grass";
+    }
+    if (blockName == "meadow_grass") {
+        return "Meadow Grass";
+    }
+    if (blockName == "dry_grass") {
+        return "Dry Grass";
+    }
+    if (blockName == "fern") {
+        return "Fern";
     }
     const auto mapping = kBlockLangKeys.find(blockName);
     if (mapping != kBlockLangKeys.end()) {

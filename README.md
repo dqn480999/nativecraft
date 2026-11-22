@@ -1,6 +1,6 @@
 # NativeCraft
 
-A native C++20 Minecraft-style client. It does not use Java or the JVM. The renderer, world, player, asset pipeline, and audio system are implemented from scratch.
+A native C++20 Minecraft-style client with an infinite procedural world. It does not use Java or the JVM. Rendering, terrain generation, chunk streaming, persistence, and audio are implemented from scratch.
 
 Textures, block models, blockstates, the bitmap font, language files, and sounds are read from a local Minecraft 1.12.2 installation. The repository does not contain Minecraft assets.
 
@@ -52,6 +52,21 @@ assets/indexes/1.12.json
 assets/objects/
 ```
 
+Worlds are generated from a seed. Modified chunk data is stored under `saves/<seed>/chunks/` and reloaded on demand.
+
+Useful options:
+
+```text
+--seed N                world seed
+--render-distance N     chunk render radius, default 6
+--grass-distance N      radius with grass meshes, default 3
+--time T                time of day in [0,1]
+--time-speed S          day cycle speed
+--camera X Y Z YAW PITCH
+--screenshot PATH
+--frames N
+```
+
 ## Controls
 
 | Input | Action |
@@ -70,56 +85,35 @@ assets/objects/
 | F2 | Save screenshot to `screenshots/` |
 | Esc | Exit |
 
-## Rendering features
+## Rendering and world features
 
-- Dynamic sun position and day/night cycle.
+- Infinite chunk streaming around the player with deterministic seed-based generation.
+- Chunk unloading and binary persistence for modified chunks.
+- Multiple procedural grass types: tall grass, meadow grass, dry grass, and fern with distinct colors, blade counts, and heights.
+- Grass reacts to changing wind direction, gust strength, and the player's position.
 - 4096x4096 directional shadow map with hardware PCF, normal-offset bias, and cached updates.
-- Procedural moving clouds with parallax on a cloud plane.
-- Stars and moon at night.
-- Planar water reflections rendered from a mirrored camera.
-- Animated water waves, ripples, Fresnel reflections, sun path, and specular highlights.
-- Procedural tall grass blades with wind sway and player push interaction.
-- Sky, fog, ambient light, and sun color driven by the time of day.
-- Texture array for block textures, transparent pass for glass and ice.
+- Procedural moving clouds, sun, moon, and stars.
+- Planar water reflections, animated waves, ripples, Fresnel reflections, and specular highlights.
 - Frustum culling for shadow, reflection, opaque, grass, transparent, and water passes.
+- Grass LOD: detailed grass meshes are limited to a configurable radius.
 
-## Offline rendering check
+## Current scale
 
-```bash
-./build/nativecraft --mc-dir "$HOME/.minecraft" \
-  --screenshot shots/check.png --frames 90 --width 1280 --height 720
-```
-
-Camera and time override:
-
-```bash
-./build/nativecraft --mc-dir "$HOME/.minecraft" \
-  --time 0.20 --camera 64 70 100 10 -10 \
-  --screenshot shots/scene.png --frames 60
-```
-
-## Implemented
-
-- 8x8 chunk world (128x128x128) with an ocean margin.
-- 64 chunks and about 241,000 triangles.
-- 79 blocks, 101 unique block textures, 103 texture-array layers.
-- 9-13 procedural grass blades per tuft with wind and player interaction.
-- Walking, jumping, flight, AABB collision, and mouse look.
-- Block breaking and placement with chunk remeshing.
-- HUD with crosshair, hotbar icons, block names from `en_us.lang`, FPS, coordinates, and time.
-- Footstep and block sounds selected by block material.
-- Automatic screenshot mode.
+- 82 blocks, 101 unique block textures, 103 texture-array layers.
+- Default render radius: 6 chunks (169 meshed chunks, 225+ loaded).
+- About 400,000 triangles in the default view.
+- About 60 FPS at 1280x720 on a GTX 970.
 
 ## Limitations
 
-- No save loading or saving. Anvil/NBT is not implemented.
 - No inventory, item entities, crafting, mobs, or networking.
 - Only cube-based block models are supported.
 - Animated textures use the first frame.
 - No weather, volumetric lighting, or cloud shadows.
 - Tall grass has no collision and does not cast shadows.
-- Audio is non-positional and limited to footsteps and block sounds.
-- The world is finite and has no chunk streaming or frustum culling.
+- Chunk generation and meshing are synchronous, so fast movement can cause short hitches.
+- Grass LOD changes can pop when chunks cross the grass radius.
+- Meshes are rebuilt from chunk data and are not stored on disk.
 
 ## Documentation
 

@@ -92,8 +92,9 @@ bool Game::init(const GameOptions& options, std::string* error) {
         logWarn("audio disabled: %s", audioError.c_str());
     }
 
-    world_ = std::make_unique<World>(8, 8, options_.seed);
-    world_->generate(blocks_);
+    const std::string saveDirectory = "saves/" + std::to_string(options_.seed);
+    world_ = std::make_unique<World>(options_.seed, saveDirectory);
+    world_->updateStreaming({0.0f, 64.0f, 0.0f}, options_.renderDistance, blocks_);
     player_.spawn(*world_, blocks_);
     player_.yaw = 35.0f;
     player_.pitch = -18.0f;
@@ -104,7 +105,15 @@ bool Game::init(const GameOptions& options, std::string* error) {
         player_.flying = true;
         player_.velocity = {};
     }
-    worldRenderer_.build(*world_, blocks_);
+    world_->updateStreaming(player_.position, options_.renderDistance, blocks_);
+    lastStreamCenter_ = World::chunkOf(static_cast<int>(std::floor(player_.position.x)),
+                                       static_cast<int>(std::floor(player_.position.z)));
+    hasStreamCenter_ = true;
+    worldRenderer_.syncMeshes(*world_, blocks_, lastStreamCenter_, options_.renderDistance,
+                              options_.grassDistance);
+    logInfo("world seed=%llu renderDistance=%d grassDistance=%d",
+            static_cast<unsigned long long>(options_.seed), options_.renderDistance,
+            options_.grassDistance);
 
     hotbar_.clear();
     for (const std::string& name : blocks_.hotbarNames()) {
@@ -279,6 +288,14 @@ void Game::update(float deltaTime) {
     }
     environment_ = computeEnvironment(timeOfDay_);
 
+    const float windTime = elapsedTime_;
+    const float windAngle = 0.9f + 0.7f * std::sin(windTime * 0.05f)
+                          + 0.25f * std::sin(windTime * 0.17f);
+    windDirection_ = {std::cos(windAngle), 0.0f, std::sin(windAngle)};
+    windStrength_ = clampf(0.18f + 0.10f * (0.5f + 0.5f * std::sin(windTime * 0.37f))
+                               + 0.06f * std::sin(windTime * 1.7f + 0.4f),
+                           0.05f, 0.45f);
+
     if (screenshotMode_) {
         return;
     }
@@ -294,6 +311,17 @@ void Game::update(float deltaTime) {
     input.boost = keys[SDL_SCANCODE_LSHIFT] != 0 || keys[SDL_SCANCODE_RSHIFT] != 0;
 
     player_.update(*world_, blocks_, input, deltaTime);
+
+    const ChunkPos center = World::chunkOf(static_cast<int>(std::floor(player_.position.x)),
+                                           static_cast<int>(std::floor(player_.position.z)));
+    if (!hasStreamCenter_ || center.x != lastStreamCenter_.x
+        || center.z != lastStreamCenter_.z) {
+        world_->updateStreaming(player_.position, options_.renderDistance, blocks_);
+        worldRenderer_.syncMeshes(*world_, blocks_, center, options_.renderDistance,
+                                  options_.grassDistance);
+        lastStreamCenter_ = center;
+        hasStreamCenter_ = true;
+    }
 
     if (!player_.flying && player_.onGround) {
         const float horizontalSpeed =
@@ -325,6 +353,10 @@ void Game::render() {
         return;
     }
 
+    const float viewDistance = static_cast<float>(options_.renderDistance * World::kChunkSize);
+    const float fogStart = viewDistance * 0.42f;
+    const float fogEnd = viewDistance * 0.92f;
+
     const int reflectionWidth = std::max(1, width);
     const int reflectionHeight = std::max(1, height);
     std::string reflectionError;
@@ -336,7 +368,7 @@ void Game::render() {
         }
     }
 
-    worldRenderer_.renderShadowMap(*world_, blocks_, environment_.sunDirection);
+    worldRenderer_.renderShadowMap(player_.position, environment_.sunDirection);
 
     const Vec3 eye = player_.eye();
     const Vec3 reflectedEye{eye.x, 2.0f * waterLevel_ - eye.y, eye.z};
@@ -358,8 +390,8 @@ void Game::render() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         sky_.render(reflectionViewProjection.inverse(), reflectedEye, environment_,
                     elapsedTime_);
-        worldRenderer_.drawOpaque(reflectionViewProjection, reflectedEye, environment_, 80.0f,
-                                  230.0f, true, waterLevel_, true);
+        worldRenderer_.drawOpaque(reflectionViewProjection, reflectedEye, environment_, fogStart,
+                                  fogEnd, true, waterLevel_, true);
         reflection_.unbind();
     }
 
@@ -374,12 +406,12 @@ void Game::render() {
     const Mat4 viewProjection = projection * view;
 
     sky_.render(viewProjection.inverse(), eye, environment_, elapsedTime_);
-    worldRenderer_.drawOpaque(viewProjection, eye, environment_, 80.0f, 230.0f, false, 0.0f,
+    worldRenderer_.drawOpaque(viewProjection, eye, environment_, fogStart, fogEnd, false, 0.0f,
                               false);
-    worldRenderer_.drawGrass(viewProjection, eye, environment_, 80.0f, 230.0f, elapsedTime_,
-                             player_.position);
-    worldRenderer_.drawTransparent(viewProjection, eye, environment_, 80.0f, 230.0f);
-    worldRenderer_.drawWater(viewProjection, eye, environment_, 80.0f, 230.0f,
+    worldRenderer_.drawGrass(viewProjection, eye, environment_, fogStart, fogEnd, elapsedTime_,
+                             player_.position, windDirection_, windStrength_);
+    worldRenderer_.drawTransparent(viewProjection, eye, environment_, fogStart, fogEnd);
+    worldRenderer_.drawWater(viewProjection, eye, environment_, fogStart, fogEnd,
                              reflection_.colorTexture(), reflectionViewProjection,
                              elapsedTime_, waterLevel_);
     drawHud();
@@ -404,11 +436,16 @@ void Game::drawHud() {
                   static_cast<double>(fps_));
     shadowText(12.0f, 10.0f, line, 1.8f, {1.0f, 1.0f, 1.0f});
 
-    std::snprintf(line, sizeof(line), "XYZ %.1f  %.1f  %.1f    %s    seeds %llu",
+    const ChunkPos playerChunk =
+        World::chunkOf(static_cast<int>(std::floor(player_.position.x)),
+                       static_cast<int>(std::floor(player_.position.z)));
+    std::snprintf(line, sizeof(line),
+                  "XYZ %.1f  %.1f  %.1f  %s  seed %llu  chunk %d,%d",
                   static_cast<double>(player_.position.x),
                   static_cast<double>(player_.position.y),
                   static_cast<double>(player_.position.z), player_.flying ? "FLY" : "WALK",
-                  static_cast<unsigned long long>(options_.seed));
+                  static_cast<unsigned long long>(options_.seed), playerChunk.x,
+                  playerChunk.z);
     shadowText(12.0f, 32.0f, line, 1.5f, {0.94f, 0.94f, 0.94f});
 
     const RayHit hit = player_.raycast(*world_, blocks_, 6.0f);
@@ -419,8 +456,10 @@ void Game::drawHud() {
                   worldRenderer_.triangleCount());
     shadowText(12.0f, 52.0f, line, 1.5f, {0.94f, 0.94f, 0.94f});
 
-    std::snprintf(line, sizeof(line), "Time %.2f    Sun %.2f    %s", static_cast<double>(timeOfDay_),
+    std::snprintf(line, sizeof(line), "Time %.2f  Sun %.2f  Wind %.2f  %s",
+                  static_cast<double>(timeOfDay_),
                   static_cast<double>(environment_.sunDirection.y),
+                  static_cast<double>(windStrength_),
                   timePaused_ ? "PAUSED" : "RUNNING");
     shadowText(12.0f, 72.0f, line, 1.4f, {0.86f, 0.92f, 1.0f});
 
@@ -523,8 +562,7 @@ void Game::handlePlace() {
     const int px = hit.previousX;
     const int py = hit.previousY;
     const int pz = hit.previousZ;
-    if (py < 0 || py >= World::kHeight || px < 0 || pz < 0 || px >= world_->width()
-        || pz >= world_->depth()) {
+    if (py < 0 || py >= World::kHeight) {
         return;
     }
     const int existing = world_->get(px, py, pz);
@@ -624,6 +662,9 @@ int Game::run() {
 void Game::shutdown() {
     if (window_) {
         SDL_SetRelativeMouseMode(SDL_FALSE);
+    }
+    if (world_) {
+        world_->saveAll();
     }
     audio_.shutdown();
     hud_.destroy();

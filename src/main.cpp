@@ -21,6 +21,8 @@ void printUsage() {
                  "  --frames N         frames before screenshot (default 90)\n"
                  "  --time T           time of day in [0,1] (default 0.32)\n"
                  "  --time-speed S     time advance per second (default 0.0025)\n"
+                 "  --render-distance N  chunk render radius (default 6)\n"
+                 "  --grass-distance N   grass mesh radius (default 3)\n"
                  "  --camera X Y Z YAW PITCH  override camera (debug/screenshots)\n"
                  "  --help             show this help\n");
 }
@@ -133,6 +135,18 @@ int main(int argc, char** argv) {
             const char* value = requireValue("--time-speed");
             if (!value || !parseFloat(value, options.timeSpeed)) {
                 nc::logError("invalid --time-speed");
+                return 1;
+            }
+        } else if (std::strcmp(argument, "--render-distance") == 0) {
+            const char* value = requireValue("--render-distance");
+            if (!value || !parseInt(value, options.renderDistance, 1, 16)) {
+                nc::logError("invalid --render-distance");
+                return 1;
+            }
+        } else if (std::strcmp(argument, "--grass-distance") == 0) {
+            const char* value = requireValue("--grass-distance");
+            if (!value || !parseInt(value, options.grassDistance, 0, 16)) {
+                nc::logError("invalid --grass-distance");
                 return 1;
             }
         } else if (std::strcmp(argument, "--camera") == 0) {

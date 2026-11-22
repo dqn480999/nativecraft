@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "core/Math.hpp"
@@ -19,13 +20,13 @@ public:
     bool init(TextureArray& textures, std::string* error = nullptr);
     void destroy();
 
-    void build(const World& world, const BlockRegistry& registry);
+    void syncMeshes(const World& world, const BlockRegistry& registry, const ChunkPos& center,
+                    int renderRadius, int grassRadius);
     void rebuildChunk(const World& world, const BlockRegistry& registry, int chunkX,
-                      int chunkZ);
+                      int chunkZ, bool includeGrass);
     void rebuildAround(const World& world, const BlockRegistry& registry, int x, int z);
 
-    void renderShadowMap(const World& world, const BlockRegistry& registry,
-                         const Vec3& sunDirection);
+    void renderShadowMap(const Vec3& focus, const Vec3& sunDirection);
 
     void drawOpaque(const Mat4& viewProjection, const Vec3& cameraPosition,
                     const Environment& environment, float fogStart, float fogEnd,
@@ -33,7 +34,8 @@ public:
 
     void drawGrass(const Mat4& viewProjection, const Vec3& cameraPosition,
                    const Environment& environment, float fogStart, float fogEnd, float time,
-                   const Vec3& playerPosition);
+                   const Vec3& playerPosition, const Vec3& windDirection,
+                   float windStrength);
 
     void drawTransparent(const Mat4& viewProjection, const Vec3& cameraPosition,
                          const Environment& environment, float fogStart, float fogEnd);
@@ -76,6 +78,7 @@ private:
         int triangles = 0;
         Vec3 center{};
         Aabb bounds{};
+        bool grassEnabled = false;
         bool hasData = false;
     };
 
@@ -85,15 +88,14 @@ private:
     void setWorldUniforms(const Mat4& viewProjection, const Vec3& cameraPosition,
                           const Environment& environment, float fogStart, float fogEnd,
                           bool useClip, float clipY);
+    void destroyMesh(ChunkMesh& mesh);
 
     Shader shader_;
     Shader shadowShader_;
     Shader grassShader_;
     Shader waterShader_;
     TextureArray* textures_ = nullptr;
-    std::vector<ChunkMesh> meshes_;
-    int chunksX_ = 0;
-    int chunksZ_ = 0;
+    std::unordered_map<ChunkPos, ChunkMesh, ChunkPosHash> meshes_;
     int triangleCount_ = 0;
 
     GLuint shadowFbo_ = 0;
@@ -101,6 +103,7 @@ private:
     int shadowSize_ = 4096;
     Mat4 lightViewProjection_;
     Vec3 lastShadowSun_{};
+    Vec3 lastShadowFocus_{};
     bool shadowMapValid_ = false;
 };
 

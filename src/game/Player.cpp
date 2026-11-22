@@ -59,50 +59,69 @@ bool Player::collides(const World& world, const BlockRegistry& registry, const V
 }
 
 void Player::spawn(const World& world, const BlockRegistry& registry) {
-    const int centerX = world.width() / 2;
-    const int centerZ = world.depth() / 2;
+    const int centerX = 0;
+    const int centerZ = 0;
     const int leaves = registry.id("oak_leaves");
     const int log = registry.id("oak_log");
     const int water = registry.id("water");
+    const int grass = registry.id("grass");
 
-    for (int radius = 0; radius < 64; ++radius) {
-        for (int dz = -radius; dz <= radius; ++dz) {
-            for (int dx = -radius; dx <= radius; ++dx) {
-                if (std::max(std::abs(dx), std::abs(dz)) != radius) {
-                    continue;
-                }
-                const int x = centerX + dx;
-                const int z = centerZ + dz;
+    auto findGround = [&](int x, int z, int& ground, int& top) {
+        for (int y = World::kHeight - 1; y >= 1; --y) {
+            const int block = world.get(x, y, z);
+            if (block == 0 || block == leaves || block == log || block == water) {
+                continue;
+            }
+            if (registry.isSolid(block)) {
+                ground = y;
+                top = block;
+                return true;
+            }
+        }
+        return false;
+    };
 
-                int ground = -1;
-                for (int y = World::kHeight - 1; y >= 1; --y) {
-                    const int block = world.get(x, y, z);
-                    if (block == 0 || block == leaves || block == log || block == water) {
+    auto trySpawn = [&](bool requireGrass, int minimumGround) {
+        for (int radius = 0; radius < 96; ++radius) {
+            for (int dz = -radius; dz <= radius; ++dz) {
+                for (int dx = -radius; dx <= radius; ++dx) {
+                    if (std::max(std::abs(dx), std::abs(dz)) != radius) {
                         continue;
                     }
-                    if (registry.isSolid(block)) {
-                        ground = y;
-                        break;
+                    const int x = centerX + dx;
+                    const int z = centerZ + dz;
+                    int ground = -1;
+                    int top = 0;
+                    if (!findGround(x, z, ground, top)) {
+                        continue;
                     }
-                }
-                if (ground < 58 || ground + 3 >= World::kHeight) {
-                    continue;
-                }
-                const Vec3 candidate{static_cast<float>(x) + 0.5f,
-                                     static_cast<float>(ground + 1),
-                                     static_cast<float>(z) + 0.5f};
-                if (!collides(world, registry, candidate)) {
-                    position = candidate;
-                    velocity = {};
-                    onGround = true;
-                    return;
+                    if (ground < minimumGround || ground + 3 >= World::kHeight) {
+                        continue;
+                    }
+                    if (requireGrass && top != grass) {
+                        continue;
+                    }
+                    const Vec3 candidate{static_cast<float>(x) + 0.5f,
+                                         static_cast<float>(ground + 1),
+                                         static_cast<float>(z) + 0.5f};
+                    if (!collides(world, registry, candidate)) {
+                        position = candidate;
+                        velocity = {};
+                        onGround = true;
+                        return true;
+                    }
                 }
             }
         }
+        return false;
+    };
+
+    if (trySpawn(true, 63) || trySpawn(true, 58) || trySpawn(false, 58)) {
+        return;
     }
 
     position = {static_cast<float>(centerX) + 0.5f,
-                static_cast<float>(world.surfaceY(centerX, centerZ) + 1), 
+                static_cast<float>(world.surfaceY(centerX, centerZ) + 1),
                 static_cast<float>(centerZ) + 0.5f};
     velocity = {};
 }
@@ -183,8 +202,6 @@ void Player::update(const World& world, const BlockRegistry& registry, const Pla
         velocity.z = 0.0f;
     }
 
-    position.x = clampf(position.x, 0.5f, static_cast<float>(world.width()) - 0.5f);
-    position.z = clampf(position.z, 0.5f, static_cast<float>(world.depth()) - 0.5f);
 }
 
 RayHit Player::raycast(const World& world, const BlockRegistry& registry,

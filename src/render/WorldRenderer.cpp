@@ -492,20 +492,27 @@ bool WorldRenderer::init(TextureArray& textures, std::string* error) {
     return true;
 }
 
+void WorldRenderer::destroyMesh(ChunkMesh& mesh) {
+    if (mesh.vao) {
+        gl::DeleteVertexArrays(1, &mesh.vao);
+        mesh.vao = 0;
+    }
+    if (mesh.vbo) {
+        gl::DeleteBuffers(1, &mesh.vbo);
+        mesh.vbo = 0;
+    }
+    if (mesh.ebo) {
+        gl::DeleteBuffers(1, &mesh.ebo);
+        mesh.ebo = 0;
+    }
+    mesh.triangles = 0;
+    mesh.hasData = false;
+}
+
 void WorldRenderer::destroy() {
-    for (auto& mesh : meshes_) {
-        if (mesh.vao) {
-            gl::DeleteVertexArrays(1, &mesh.vao);
-            mesh.vao = 0;
-        }
-        if (mesh.vbo) {
-            gl::DeleteBuffers(1, &mesh.vbo);
-            mesh.vbo = 0;
-        }
-        if (mesh.ebo) {
-            gl::DeleteBuffers(1, &mesh.ebo);
-            mesh.ebo = 0;
-        }
+    for (auto& [pos, mesh] : meshes_) {
+        (void)pos;
+        destroyMesh(mesh);
     }
     meshes_.clear();
 
@@ -575,17 +582,11 @@ void WorldRenderer::uploadMesh(ChunkMesh& mesh, const std::vector<Vertex>& verti
 }
 
 void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& registry, int chunkX,
-                                 int chunkZ) {
-    if (chunkX < 0 || chunkZ < 0 || chunkX >= world.chunksX() || chunkZ >= world.chunksZ()) {
-        return;
-    }
-    const int index = chunkZ * world.chunksX() + chunkX;
-    if (index < 0 || static_cast<std::size_t>(index) >= meshes_.size()) {
-        return;
-    }
-
-    ChunkMesh& mesh = meshes_[static_cast<std::size_t>(index)];
+                                 int chunkZ, bool includeGrass) {
+    const ChunkPos pos{chunkX, chunkZ};
+    ChunkMesh& mesh = meshes_[pos];
     triangleCount_ -= mesh.triangles;
+    mesh.grassEnabled = includeGrass;
     shadowMapValid_ = false;
 
     std::vector<Vertex> vertices;
@@ -609,12 +610,18 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
 
                 const BlockDef& block = registry.def(blockId);
                 if (block.cross) {
+                    if (!includeGrass) {
+                        continue;
+                    }
                     const int tintIndex = static_cast<int>(Face::Up);
                     const float tintRed = block.tints[tintIndex][0];
                     const float tintGreen = block.tints[tintIndex][1];
                     const float tintBlue = block.tints[tintIndex][2];
                     const std::uint32_t blockHash = hashCoords(worldX, y, worldZ, 0x9E3779B9u);
-                    const int bladeCount = 9 + static_cast<int>(blockHash % 5u);
+                    const int bladeRange =
+                        std::max(1, block.grassBladeMax - block.grassBladeMin + 1);
+                    const int bladeCount =
+                        block.grassBladeMin + static_cast<int>(blockHash % static_cast<std::uint32_t>(bladeRange));
 
                     for (int blade = 0; blade < bladeCount; ++blade) {
                         const std::uint32_t h = hashCoords(
@@ -623,7 +630,10 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
                         const float localX = 0.12f + rand01(h) * 0.76f;
                         const float localZ = 0.12f + rand01(h ^ 0xC2B2AE35u) * 0.76f;
                         const float angle = rand01(h ^ 0x27D4EB2Fu) * 2.0f * kPi;
-                        const float height = 0.32f + rand01(h ^ 0x165667B1u) * 0.62f;
+                        const float height =
+                            block.grassHeightMin
+                            + rand01(h ^ 0x165667B1u)
+                                  * (block.grassHeightMax - block.grassHeightMin);
                         const float halfWidth = 0.016f + rand01(h ^ 0x9E3779B9u) * 0.022f;
                         const float lean = 0.06f + rand01(h ^ 0xD3A2646Cu) * 0.18f;
                         const float shade = 0.75f + rand01(h ^ 0xFD7046C5u) * 0.45f;
@@ -768,55 +778,89 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
     triangleCount_ += mesh.triangles;
 }
 
-void WorldRenderer::build(const World& world, const BlockRegistry& registry) {
-    chunksX_ = world.chunksX();
-    chunksZ_ = world.chunksZ();
-    meshes_.resize(static_cast<std::size_t>(chunksX_) * chunksZ_);
-    triangleCount_ = 0;
-    for (int chunkZ = 0; chunkZ < chunksZ_; ++chunkZ) {
-        for (int chunkX = 0; chunkX < chunksX_; ++chunkX) {
-            rebuildChunk(world, registry, chunkX, chunkZ);
+void WorldRenderer::syncMeshes(const World& world, const BlockRegistry& registry,
+                               const ChunkPos& center, int renderRadius, int grassRadius) {
+    std::unordered_map<ChunkPos, bool, ChunkPosHash> desired;
+    for (int dz = -renderRadius; dz <= renderRadius; ++dz) {
+        for (int dx = -renderRadius; dx <= renderRadius; ++dx) {
+            const ChunkPos pos{center.x + dx, center.z + dz};
+            if (!world.isChunkLoaded(pos)) {
+                continue;
+            }
+            const bool includeGrass =
+                std::abs(dx) <= grassRadius && std::abs(dz) <= grassRadius;
+            desired.emplace(pos, includeGrass);
         }
     }
-    logInfo("world meshes: %d chunks, %d triangles", chunksX_ * chunksZ_, triangleCount_);
+
+    for (auto it = meshes_.begin(); it != meshes_.end();) {
+        const auto target = desired.find(it->first);
+        if (target == desired.end() || !world.isChunkLoaded(it->first)) {
+            triangleCount_ -= it->second.triangles;
+            destroyMesh(it->second);
+            it = meshes_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for (const auto& [pos, includeGrass] : desired) {
+        const auto existing = meshes_.find(pos);
+        if (existing == meshes_.end()) {
+            rebuildChunk(world, registry, pos.x, pos.z, includeGrass);
+        } else if (existing->second.grassEnabled != includeGrass) {
+            rebuildChunk(world, registry, pos.x, pos.z, includeGrass);
+        }
+    }
 }
 
 void WorldRenderer::rebuildAround(const World& world, const BlockRegistry& registry, int x,
                                   int z) {
-    const int chunkX = x / World::kChunkSize;
-    const int chunkZ = z / World::kChunkSize;
-    rebuildChunk(world, registry, chunkX, chunkZ);
-    if (x % World::kChunkSize == 0) {
-        rebuildChunk(world, registry, chunkX - 1, chunkZ);
+    const ChunkPos center = World::chunkOf(x, z);
+    const int localX = World::localCoord(x);
+    const int localZ = World::localCoord(z);
+
+    auto rebuild = [&](int chunkX, int chunkZ) {
+        const ChunkPos pos{chunkX, chunkZ};
+        if (!world.isChunkLoaded(pos)) {
+            return;
+        }
+        const auto existing = meshes_.find(pos);
+        if (existing == meshes_.end()) {
+            return;
+        }
+        rebuildChunk(world, registry, chunkX, chunkZ, existing->second.grassEnabled);
+    };
+
+    rebuild(center.x, center.z);
+    if (localX == 0) {
+        rebuild(center.x - 1, center.z);
     }
-    if (x % World::kChunkSize == World::kChunkSize - 1) {
-        rebuildChunk(world, registry, chunkX + 1, chunkZ);
+    if (localX == World::kChunkSize - 1) {
+        rebuild(center.x + 1, center.z);
     }
-    if (z % World::kChunkSize == 0) {
-        rebuildChunk(world, registry, chunkX, chunkZ - 1);
+    if (localZ == 0) {
+        rebuild(center.x, center.z - 1);
     }
-    if (z % World::kChunkSize == World::kChunkSize - 1) {
-        rebuildChunk(world, registry, chunkX, chunkZ + 1);
+    if (localZ == World::kChunkSize - 1) {
+        rebuild(center.x, center.z + 1);
     }
 }
 
-void WorldRenderer::renderShadowMap(const World& world, const BlockRegistry& registry,
-                                    const Vec3& sunDirection) {
-    (void)registry;
+void WorldRenderer::renderShadowMap(const Vec3& focus, const Vec3& sunDirection) {
     if (!shadowFbo_ || meshes_.empty()) {
         return;
     }
-    if (shadowMapValid_ && dot(sunDirection, lastShadowSun_) > 0.99997f) {
+    if (shadowMapValid_ && dot(sunDirection, lastShadowSun_) > 0.99997f
+        && lengthSquared(focus - lastShadowFocus_) < 36.0f) {
         return;
     }
 
-    const Vec3 center{static_cast<float>(world.width()) * 0.5f, 64.0f,
-                      static_cast<float>(world.depth()) * 0.5f};
+    const Vec3 center{focus.x, 64.0f, focus.z};
     const Vec3 up = std::abs(sunDirection.y) > 0.98f ? Vec3{1.0f, 0.0f, 0.0f}
                                                      : Vec3{0.0f, 1.0f, 0.0f};
     const Mat4 lightView = Mat4::lookAt(center + sunDirection * 140.0f, center, up);
-    const float extent = static_cast<float>(std::max(world.width(), world.depth())) * 0.75f
-                       + 12.0f;
+    const float extent = 90.0f;
     const Mat4 lightProjection =
         Mat4::orthographic(-extent, extent, -extent, extent, 1.0f, 320.0f);
     lightViewProjection_ = lightProjection * lightView;
@@ -839,7 +883,8 @@ void WorldRenderer::renderShadowMap(const World& world, const BlockRegistry& reg
     shadowShader_.setMat4("uLightVP", lightViewProjection_);
 
     const Frustum lightFrustum = extractFrustum(lightViewProjection_);
-    for (const auto& mesh : meshes_) {
+    for (const auto& [pos, mesh] : meshes_) {
+        (void)pos;
         if (mesh.opaqueIndices == 0 || !intersectsFrustum(lightFrustum, mesh.bounds)) {
             continue;
         }
@@ -849,6 +894,7 @@ void WorldRenderer::renderShadowMap(const World& world, const BlockRegistry& reg
 
     shadowMapValid_ = true;
     lastShadowSun_ = sunDirection;
+    lastShadowFocus_ = focus;
 
     glDisable(GL_POLYGON_OFFSET_FILL);
     gl::BindVertexArray(0);
@@ -902,7 +948,8 @@ void WorldRenderer::drawOpaque(const Mat4& viewProjection, const Vec3& cameraPos
     glDisable(GL_BLEND);
 
     const Frustum frustum = extractFrustum(viewProjection);
-    for (const auto& mesh : meshes_) {
+    for (const auto& [pos, mesh] : meshes_) {
+        (void)pos;
         if (mesh.opaqueIndices == 0 || !intersectsFrustum(frustum, mesh.bounds)) {
             continue;
         }
@@ -917,7 +964,8 @@ void WorldRenderer::drawOpaque(const Mat4& viewProjection, const Vec3& cameraPos
 
 void WorldRenderer::drawGrass(const Mat4& viewProjection, const Vec3& cameraPosition,
                               const Environment& environment, float fogStart, float fogEnd,
-                              float time, const Vec3& playerPosition) {
+                              float time, const Vec3& playerPosition,
+                              const Vec3& windDirection, float windStrength) {
     if (!textures_ || triangleCount_ == 0) {
         return;
     }
@@ -936,8 +984,8 @@ void WorldRenderer::drawGrass(const Mat4& viewProjection, const Vec3& cameraPosi
     grassShader_.setFloat("uShadowStrength", 0.82f);
     grassShader_.setFloat("uShadowNormalOffset", 0.03f);
     grassShader_.setFloat("uTime", time);
-    grassShader_.setVec3("uWindDir", {0.8f, 0.0f, 0.6f});
-    grassShader_.setFloat("uWindStrength", 0.24f);
+    grassShader_.setVec3("uWindDir", windDirection);
+    grassShader_.setFloat("uWindStrength", windStrength);
     grassShader_.setVec3("uPlayerPos", playerPosition);
     grassShader_.setFloat("uPlayerRadius", 1.7f);
     grassShader_.setInt("uShadowMap", 1);
@@ -951,7 +999,8 @@ void WorldRenderer::drawGrass(const Mat4& viewProjection, const Vec3& cameraPosi
     glDisable(GL_BLEND);
 
     const Frustum frustum = extractFrustum(viewProjection);
-    for (const auto& mesh : meshes_) {
+    for (const auto& [pos, mesh] : meshes_) {
+        (void)pos;
         if (mesh.grassIndices == 0 || !intersectsFrustum(frustum, mesh.bounds)) {
             continue;
         }
@@ -978,7 +1027,8 @@ void WorldRenderer::drawTransparent(const Mat4& viewProjection, const Vec3& came
 
     const Frustum frustum = extractFrustum(viewProjection);
     std::vector<std::pair<float, const ChunkMesh*>> order;
-    for (const auto& mesh : meshes_) {
+    for (const auto& [pos, mesh] : meshes_) {
+        (void)pos;
         if (mesh.transparentIndices == 0 || !intersectsFrustum(frustum, mesh.bounds)) {
             continue;
         }
@@ -1032,7 +1082,8 @@ void WorldRenderer::drawWater(const Mat4& viewProjection, const Vec3& cameraPosi
 
     const Frustum frustum = extractFrustum(viewProjection);
     std::vector<std::pair<float, const ChunkMesh*>> order;
-    for (const auto& mesh : meshes_) {
+    for (const auto& [pos, mesh] : meshes_) {
+        (void)pos;
         if (mesh.waterIndices == 0 || !intersectsFrustum(frustum, mesh.bounds)) {
             continue;
         }
