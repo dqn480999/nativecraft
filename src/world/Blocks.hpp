@@ -38,6 +38,7 @@ struct BlockDef {
     bool transparentPass = false;
     bool liquid = false;
     bool cross = false;
+    bool slab = false;
     int grassBladeMin = 9;
     int grassBladeMax = 13;
     float grassHeightMin = 0.32f;
@@ -68,6 +69,8 @@ private:
     bool addWaterOrLava(const std::string& name, Assets& assets, TextureArray& textures);
     bool addCrossVegetation(const std::string& name, const Vec3& tint, int bladeMin,
                             int bladeMax, float heightMin, float heightMax);
+    bool addSlabBlock(const std::string& name, const std::string& baseName,
+                      const std::string& displayName);
     int textureLayer(Assets& assets, TextureArray& textures, const std::string& textureName);
     std::string lookupDisplayName(const std::string& blockName) const;
     std::map<std::string, std::string> lang_;

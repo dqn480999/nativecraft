@@ -1,6 +1,6 @@
 # NativeCraft
 
-A native C++20 Minecraft-style client with an infinite procedural world. It does not use Java or the JVM. Rendering, multithreaded terrain generation, chunk streaming, persistence, and audio are implemented from scratch.
+A native C++20 Minecraft-style client with an infinite procedural world. It does not use Java or the JVM. Rendering, multithreaded terrain generation, chunk streaming, water simulation, persistence, and audio are implemented from scratch.
 
 Textures, block models, blockstates, the bitmap font, language files, and sounds are read from a local Minecraft 1.12.2 installation. The repository does not contain Minecraft assets.
 
@@ -17,6 +17,8 @@ Textures, block models, blockstates, the bitmap font, language files, and sounds
 ![Sun](docs/screenshots/sun.png)
 
 ![Night](docs/screenshots/night.png)
+
+![Snow-capped mountains](docs/screenshots/mountains.png)
 
 ![World overview](docs/screenshots/overview.png)
 
@@ -104,13 +106,16 @@ Useful options:
 - Procedural moving clouds, sun, moon, and stars.
 - Planar water reflections, animated waves, ripples, Fresnel reflections, and specular highlights.
 - Swimming with buoyancy, underwater fog, blue-green underwater color, caustics, and sun glints through the water surface.
-- Deeper procedural water basins for diving.
+- Deeper procedural water basins for diving, plus huge snow-capped mountains.
+- Water simulation: exposed underwater air refills and connected air pockets below sea level flood.
+- Bottom slabs for stone, cobblestone, oak, sandstone, and bricks with partial collision and step-up.
+- Background music, looping water ambience when swimming, synthetic bird chirps, and low-altitude mist.
 - Frustum culling for shadow, reflection, opaque, grass, transparent, and water passes.
 - Grass LOD: detailed grass meshes are limited to a configurable radius.
 
 ## Current scale
 
-- 82 blocks, 101 unique block textures, 103 texture-array layers.
+- 87 blocks, 101 unique block textures, 103 texture-array layers.
 - Default render radius: 6 chunks (169 meshed chunks, 225+ loaded).
 - About 400,000 triangles in the default view.
 - About 60 FPS at 1280x720 on a GTX 970.
@@ -118,11 +123,14 @@ Useful options:
 ## Limitations
 
 - No inventory, item entities, crafting, mobs, or networking.
-- Only cube-based block models are supported.
+- Only cube and bottom-slab block models are supported.
 - Animated textures use the first frame.
 - No weather, volumetric lighting, or cloud shadows.
 - Tall grass has no collision. Its shadows are limited to the near shadow cascade (22 blocks).
-- No drowning, oxygen meter, water flow, or lava damage.
+- No drowning, oxygen meter, flowing water levels, or lava damage.
+- Water simulation fills connected air below sea level; it does not model partial water levels.
+- Slabs are bottom-half only.
+- Bird chirps are synthesized because the 1.12 asset set has no bird sounds.
 - Chunk generation and disk loading are multithreaded; mesh building and OpenGL uploads remain on the render thread and are budgeted per frame.
 - The software ray tracing test samples the original block textures at 1280x720 with nearest filtering. It still uses voxel geometry and does not render individual grass blades.
 - Grass LOD changes can pop when chunks cross the grass radius.

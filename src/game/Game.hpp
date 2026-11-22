@@ -84,6 +84,7 @@ private:
     float windStrength_ = 0.24f;
     bool underwater_ = false;
     bool underwaterLava_ = false;
+    double birdTimer_ = 7.0;
     ChunkPos lastStreamCenter_{};
     bool hasStreamCenter_ = false;
 

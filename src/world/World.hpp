@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <future>
 #include <memory>
 #include <string>
@@ -29,6 +30,20 @@ struct ChunkPosHash {
     std::size_t operator()(const ChunkPos& pos) const noexcept;
 };
 
+struct BlockPos {
+    int x = 0;
+    int y = 0;
+    int z = 0;
+
+    bool operator==(const BlockPos& other) const {
+        return x == other.x && y == other.y && z == other.z;
+    }
+};
+
+struct BlockPosHash {
+    std::size_t operator()(const BlockPos& pos) const noexcept;
+};
+
 class World {
 public:
     static constexpr int kChunkSize = 16;
@@ -43,6 +58,8 @@ public:
                          const BlockRegistry& registry);
     void pumpCompleted();
     bool isStreamingIdle() const { return pending_.empty(); }
+    void scheduleFluid(int x, int y, int z);
+    std::vector<ChunkPos> updateFluids(const BlockRegistry& registry, int budget);
 
     std::uint8_t get(int x, int y, int z) const;
     void set(int x, int y, int z, std::uint8_t block);
@@ -94,6 +111,8 @@ private:
     std::string saveDirectory_;
     std::unordered_map<ChunkPos, Chunk, ChunkPosHash> chunks_;
     std::unordered_set<ChunkPos, ChunkPosHash> pending_;
+    std::deque<BlockPos> fluidQueue_;
+    std::unordered_set<BlockPos, BlockPosHash> fluidQueued_;
     std::vector<PendingJob> pendingJobs_;
     ChunkPos streamCenter_{};
     int streamRadius_ = 6;

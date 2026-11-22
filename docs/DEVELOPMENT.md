@@ -73,8 +73,9 @@ The grass block uses a composited side texture built from `grass_side` and a gre
 ## World generation
 
 - Chunks are 16x128x16.
-- Terrain height uses two fBm value noise bands plus a continental noise band. Sea level is 56.
+- Terrain height uses two fBm value noise bands, a continental band, and a ridged mountain term. Sea level is 56.
 - Low columns are deepened into basins, then filled with water and topped with sand. Higher ground is grass or dirt.
+- Peaks above y=82 are stone; peaks above y=94 get snow tops.
 - Stone, dirt, grass, coal ore, iron ore, and gravel are placed by depth and position hash.
 - Trees are placed deterministically from a position hash and are restricted to the chunk interior so they never cross chunk boundaries.
 - Grass types are chosen from a low-frequency biome noise plus a per-column hash. The grass density is two thirds of eligible grass columns.
@@ -95,6 +96,21 @@ Each frame runs these passes:
 
 All world passes use frustum culling against cached chunk bounds.
 
+## Water simulation
+
+- Breaking a block below sea level schedules a fluid update.
+- A queued air cell becomes water if it touches an existing water block and is below sea level.
+- Newly filled cells schedule their air neighbors, producing a breadth-first flood through connected caves and holes.
+- Fluid updates are budgeted to 64 cells per frame and return the affected chunks for remeshing.
+- The simulation does not model partial water levels or flowing textures; water is a full block.
+
+## Slabs
+
+- Slab blocks copy their base block textures and use a half-height box in the mesher.
+- Slabs are non-opaque for face culling so adjacent full blocks still render their sides.
+- Collision uses a half-height AABB.
+- The player has a 0.6-block step-up assist for walking onto slabs.
+
 ## Swimming and underwater rendering
 
 - The player detects liquid at the feet and chest. In water, gravity is reduced, vertical drag is applied, Space swims up, and Ctrl swims down.
@@ -103,6 +119,18 @@ All world passes use frustum culling against cached chunk bounds.
 - The water shader brightens the surface seen from below and adds a sun-through-water glow and surface caustics.
 - Water is rendered double-sided when the camera is below the water level so the underside of the surface is visible.
 - A translucent full-screen tint is drawn in the HUD while submerged.
+
+## Ambient audio
+
+- Background music loops `music/game/calm1.ogg` at low gain.
+- A looping `liquid/water.ogg` source fades in while the player is in water.
+- Bird chirps are synthesized into an OpenAL buffer with a short frequency sweep and played at randomized pitch.
+- Bird chirps play every 9-15 seconds during daytime when the camera is not underwater.
+
+## Atmosphere
+
+- Distance fog is combined with a subtle low-altitude mist near sea level.
+- Underwater fog, ambient color, caustics, and sun-through-water glints are described above.
 
 ## Lighting model
 
@@ -162,7 +190,7 @@ Verified on:
 - Mesh build budget: 2 chunks per frame
 - 169 meshed chunks and more than 225 loaded chunks
 - About 400,000 triangles in the default view
-- 82 blocks, 101 textures, 103 texture-array layers
+- 87 blocks, 101 textures, 103 texture-array layers
 
 ## Next work
 

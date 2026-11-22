@@ -19,6 +19,12 @@ namespace nc {
 namespace {
 
 std::string blockMaterial(const std::string& name) {
+    if (name.find("slab") != std::string::npos) {
+        if (name.find("oak") != std::string::npos || name.find("wood") != std::string::npos) {
+            return "wood";
+        }
+        return "stone";
+    }
     if (name.find("grass") != std::string::npos || name == "dirt" || name == "coarse_dirt"
         || name == "grass_path" || name.find("leaves") != std::string::npos) {
         return "grass";
@@ -206,6 +212,8 @@ bool Game::init(const GameOptions& options, std::string* error) {
     std::string audioError;
     if (!audio_.init(assets_, &audioError)) {
         logWarn("audio disabled: %s", audioError.c_str());
+    } else if (!screenshotMode_ && options_.raytracePath.empty()) {
+        audio_.playMusic("minecraft/sounds/music/game/calm1.ogg", 0.10f);
     }
 
     const std::string saveDirectory = "saves/" + std::to_string(options_.seed);
@@ -453,6 +461,11 @@ void Game::update(float deltaTime) {
     worldRenderer_.syncMeshes(*world_, blocks_, center, options_.renderDistance,
                               options_.grassDistance);
 
+    const std::vector<ChunkPos> fluidChanges = world_->updateFluids(blocks_, 64);
+    for (const ChunkPos& pos : fluidChanges) {
+        worldRenderer_.rebuildChunkAt(*world_, blocks_, pos);
+    }
+
     if (screenshotMode_) {
         return;
     }
@@ -477,6 +490,16 @@ void Game::update(float deltaTime) {
         worldRenderer_.syncMeshes(*world_, blocks_, movedCenter, options_.renderDistance,
                                   options_.grassDistance);
         lastStreamCenter_ = movedCenter;
+    }
+
+    audio_.setWaterLoop(player_.inWater, 0.42f);
+
+    birdTimer_ -= deltaTime;
+    if (birdTimer_ <= 0.0) {
+        birdTimer_ = 9.0 + 6.0 * (0.5 + 0.5 * std::sin(elapsedTime_ * 0.7));
+        if (!underwater_ && environment_.dayFactor > 0.3f) {
+            audio_.playBirdChirp(0.16f);
+        }
     }
 
     if (!player_.flying && player_.onGround) {

@@ -26,6 +26,8 @@ public:
                      int grassRadius) const;
     void rebuildChunk(const World& world, const BlockRegistry& registry, int chunkX,
                       int chunkZ, bool includeGrass);
+    void rebuildChunkAt(const World& world, const BlockRegistry& registry,
+                        const ChunkPos& pos);
     void rebuildAround(const World& world, const BlockRegistry& registry, int x, int z);
 
     void renderShadowMap(const Vec3& focus, const Vec3& sunDirection, float time,

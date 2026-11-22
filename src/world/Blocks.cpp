@@ -333,8 +333,14 @@ bool BlockRegistry::load(Assets& assets, TextureArray& textures, std::string* er
     addCrossVegetation("dry_grass", {0.60f, 0.50f, 0.18f}, 9, 13, 0.20f, 0.62f);
     addCrossVegetation("fern", {0.14f, 0.38f, 0.12f}, 12, 17, 0.40f, 1.05f);
 
+    addSlabBlock("stone_slab", "stone", "Stone Slab");
+    addSlabBlock("cobblestone_slab", "cobblestone", "Cobblestone Slab");
+    addSlabBlock("oak_slab", "oak_planks", "Oak Slab");
+    addSlabBlock("sandstone_slab", "sandstone", "Sandstone Slab");
+    addSlabBlock("brick_slab", "brick_block", "Brick Slab");
+
     hotbarNames_ = {"grass", "dirt", "stone", "cobblestone", "oak_planks", "oak_log", "sand",
-                    "glass", "oak_leaves"};
+                    "glass", "stone_slab"};
 
     logInfo("block registry: %zu blocks, %zu textures, %d failed", blocks_.size(),
             textureLayers_.size(), failed);
@@ -445,6 +451,29 @@ bool BlockRegistry::addCrossVegetation(const std::string& name, const Vec3& tint
     def.grassBladeMax = bladeMax;
     def.grassHeightMin = heightMin;
     def.grassHeightMax = heightMax;
+    ids_[name] = static_cast<int>(blocks_.size());
+    blocks_.push_back(std::move(def));
+    return true;
+}
+
+bool BlockRegistry::addSlabBlock(const std::string& name, const std::string& baseName,
+                                 const std::string& displayName) {
+    if (ids_.find(name) != ids_.end()) {
+        return true;
+    }
+    const auto baseIt = ids_.find(baseName);
+    if (baseIt == ids_.end()) {
+        return false;
+    }
+    BlockDef def = blocks_[static_cast<std::size_t>(baseIt->second)];
+    def.name = name;
+    def.displayName = displayName;
+    def.slab = true;
+    def.cross = false;
+    def.opaque = false;
+    def.solid = true;
+    def.transparentPass = false;
+    def.liquid = false;
     ids_[name] = static_cast<int>(blocks_.size());
     blocks_.push_back(std::move(def));
     return true;

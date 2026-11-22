@@ -80,6 +80,16 @@ float fbm(float x, float z, std::uint64_t seed, int octaves) {
 
 }
 
+std::size_t BlockPosHash::operator()(const BlockPos& pos) const noexcept {
+    std::uint64_t value = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(pos.x)) << 42u)
+                        ^ (static_cast<std::uint64_t>(static_cast<std::uint32_t>(pos.y)) << 21u)
+                        ^ static_cast<std::uint32_t>(pos.z);
+    value ^= value >> 33u;
+    value *= 0xff51afd7ed558ccdull;
+    value ^= value >> 33u;
+    return static_cast<std::size_t>(value >> 32u);
+}
+
 std::size_t ChunkPosHash::operator()(const ChunkPos& pos) const noexcept {
     std::uint64_t value = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(pos.x)) << 32u)
                         ^ static_cast<std::uint32_t>(pos.z);
@@ -275,6 +285,7 @@ void World::generateChunkBlocks(const ChunkPos& pos,
     const int meadowGrass = registry.id("meadow_grass");
     const int dryGrass = registry.id("dry_grass");
     const int fern = registry.id("fern");
+    const int snow = registry.id("snow");
 
     std::array<int, kChunkSize * kChunkSize> heights{};
     const int baseX = pos.x * kChunkSize;
@@ -295,10 +306,19 @@ void World::generateChunkBlocks(const ChunkPos& pos,
             int height = 48 + static_cast<int>(base * 22.0f)
                        + static_cast<int>(detail * 6.0f)
                        + static_cast<int>((continent - 0.5f) * 28.0f);
+            const float mountain = fbm(static_cast<float>(worldX) * 0.0045f,
+                                       static_cast<float>(worldZ) * 0.0045f,
+                                       seed ^ 0x3A7F19ull, 4);
+            if (mountain > 0.60f) {
+                const float ridge = (mountain - 0.60f) / 0.40f;
+                height += static_cast<int>(ridge * ridge * 60.0f);
+            }
             height = std::clamp(height, 8, kHeight - 12);
             heights[localZ * kChunkSize + localX] = height;
 
             const bool beach = height <= kSeaLevel + 1;
+            const bool rocky = height > 82;
+            const bool snowy = height > 94;
             for (int y = 0; y < kHeight; ++y) {
                 int block = 0;
                 if (y == 0) {
@@ -314,9 +334,15 @@ void World::generateChunkBlocks(const ChunkPos& pos,
                         block = gravel;
                     }
                 } else if (y < height - 1) {
-                    block = beach ? sand : dirt;
+                    block = rocky ? stone : (beach ? sand : dirt);
                 } else if (y == height - 1) {
-                    block = (height <= kSeaLevel || beach) ? sand : grass;
+                    if (snowy && snow > 0) {
+                        block = snow;
+                    } else if (rocky) {
+                        block = stone;
+                    } else {
+                        block = (height <= kSeaLevel || beach) ? sand : grass;
+                    }
                 } else if (y < kSeaLevel) {
                     block = water;
                 }
@@ -548,6 +574,91 @@ void World::set(int x, int y, int z, std::uint8_t block) {
     chunk->blocks[static_cast<std::size_t>(localIndex(localCoord(x), y, localCoord(z)))] =
         block;
     chunk->modified = true;
+    if (block == 0 && y < kSeaLevel) {
+        scheduleFluid(x, y, z);
+    }
+}
+
+void World::scheduleFluid(int x, int y, int z) {
+    if (y < 0 || y >= kSeaLevel) {
+        return;
+    }
+    const BlockPos pos{x, y, z};
+    if (fluidQueued_.find(pos) != fluidQueued_.end()) {
+        return;
+    }
+    if (get(x, y, z) != 0) {
+        return;
+    }
+    fluidQueued_.insert(pos);
+    fluidQueue_.push_back(pos);
+}
+
+std::vector<ChunkPos> World::updateFluids(const BlockRegistry& registry, int budget) {
+    std::vector<ChunkPos> changed;
+    const int water = registry.id("water");
+    if (water <= 0) {
+        fluidQueue_.clear();
+        fluidQueued_.clear();
+        return changed;
+    }
+
+    std::unordered_set<ChunkPos, ChunkPosHash> changedChunks;
+    constexpr int directions[6][3] = {
+        {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1},
+    };
+
+    int processed = 0;
+    while (processed < budget && !fluidQueue_.empty()) {
+        const BlockPos pos = fluidQueue_.front();
+        fluidQueue_.pop_front();
+        fluidQueued_.erase(pos);
+        ++processed;
+
+        if (get(pos.x, pos.y, pos.z) != 0 || pos.y >= kSeaLevel) {
+            continue;
+        }
+
+        bool touchesWater = false;
+        for (const auto& direction : directions) {
+            const int nx = pos.x + direction[0];
+            const int ny = pos.y + direction[1];
+            const int nz = pos.z + direction[2];
+            if (get(nx, ny, nz) == water) {
+                touchesWater = true;
+                break;
+            }
+        }
+        if (!touchesWater) {
+            continue;
+        }
+
+        const ChunkPos chunkPos = chunkOf(pos.x, pos.z);
+        Chunk* chunk = findChunk(chunkPos);
+        if (!chunk || !chunk->generated) {
+            continue;
+        }
+        chunk->blocks[static_cast<std::size_t>(
+            localIndex(localCoord(pos.x), pos.y, localCoord(pos.z)))] =
+            static_cast<std::uint8_t>(water);
+        chunk->modified = true;
+        changedChunks.insert(chunkPos);
+
+        for (const auto& direction : directions) {
+            const int nx = pos.x + direction[0];
+            const int ny = pos.y + direction[1];
+            const int nz = pos.z + direction[2];
+            if (ny >= 0 && ny < kSeaLevel && get(nx, ny, nz) == 0) {
+                scheduleFluid(nx, ny, nz);
+            }
+        }
+    }
+
+    changed.reserve(changedChunks.size());
+    for (const ChunkPos& pos : changedChunks) {
+        changed.push_back(pos);
+    }
+    return changed;
 }
 
 int World::surfaceY(int x, int z) const {

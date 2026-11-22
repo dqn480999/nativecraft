@@ -266,6 +266,8 @@ void main() {
     }
 
     float fog = clamp((distanceToCamera - uFogStart) / max(0.001, uFogEnd - uFogStart), 0.0, 1.0);
+    float lowMist = (1.0 - smoothstep(0.0, 12.0, abs(vWorldPos.y - uWaterLevel))) * 0.06;
+    fog = clamp(fog + lowMist, 0.0, 1.0);
     color = mix(color, uFogColor, fog);
     FragColor = vec4(color, alpha);
 }
@@ -823,6 +825,55 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
                     continue;
                 }
 
+                if (block.slab) {
+                    for (int face = 0; face < kFaceCount; ++face) {
+                        const int nx = worldX + kOffsets[face][0];
+                        const int ny = y + kOffsets[face][1];
+                        const int nz = worldZ + kOffsets[face][2];
+                        const std::uint8_t neighbor = world.get(nx, ny, nz);
+                        if (registry.isOpaque(neighbor)) {
+                            continue;
+                        }
+                        if (neighbor == blockId && !block.opaque) {
+                            continue;
+                        }
+                        const int layer = block.layers[static_cast<std::size_t>(face)];
+                        if (layer < 0) {
+                            continue;
+                        }
+                        const FaceInfo& info = kFaces[face];
+                        const float red = block.tints[static_cast<std::size_t>(face)][0];
+                        const float green = block.tints[static_cast<std::size_t>(face)][1];
+                        const float blue = block.tints[static_cast<std::size_t>(face)][2];
+                        const std::uint32_t base =
+                            static_cast<std::uint32_t>(vertices.size());
+                        for (int vertex = 0; vertex < 4; ++vertex) {
+                            Vertex out;
+                            out.x = static_cast<float>(worldX) + info.corners[vertex].x;
+                            out.y = static_cast<float>(y) + info.corners[vertex].y * 0.5f;
+                            out.z = static_cast<float>(worldZ) + info.corners[vertex].z;
+                            out.nx = static_cast<float>(kOffsets[face][0]);
+                            out.ny = static_cast<float>(kOffsets[face][1]);
+                            out.nz = static_cast<float>(kOffsets[face][2]);
+                            out.u = info.u[vertex];
+                            out.v = info.v[vertex];
+                            out.layer = static_cast<float>(layer);
+                            out.r = red;
+                            out.g = green;
+                            out.b = blue;
+                            out.a = block.alpha;
+                            vertices.push_back(out);
+                        }
+                        opaqueIndices.push_back(base + 0);
+                        opaqueIndices.push_back(base + 1);
+                        opaqueIndices.push_back(base + 2);
+                        opaqueIndices.push_back(base + 0);
+                        opaqueIndices.push_back(base + 2);
+                        opaqueIndices.push_back(base + 3);
+                    }
+                    continue;
+                }
+
                 std::vector<std::uint32_t>* target = &opaqueIndices;
                 if (block.name == "water") {
                     target = &waterIndices;
@@ -995,6 +1046,15 @@ bool WorldRenderer::isSyncedFor(const World& world, const ChunkPos& center, int 
         }
     }
     return true;
+}
+
+void WorldRenderer::rebuildChunkAt(const World& world, const BlockRegistry& registry,
+                                   const ChunkPos& pos) {
+    const auto existing = meshes_.find(pos);
+    if (existing == meshes_.end()) {
+        return;
+    }
+    rebuildChunk(world, registry, pos.x, pos.z, existing->second.grassEnabled);
 }
 
 void WorldRenderer::rebuildAround(const World& world, const BlockRegistry& registry, int x,

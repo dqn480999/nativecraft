@@ -49,9 +49,18 @@ bool Player::collides(const World& world, const BlockRegistry& registry, const V
     for (int y = minY; y <= maxY; ++y) {
         for (int z = minZ; z <= maxZ; ++z) {
             for (int x = minX; x <= maxX; ++x) {
-                if (registry.isSolid(world.get(x, y, z))) {
-                    return true;
+                const int block = world.get(x, y, z);
+                if (!registry.isSolid(block)) {
+                    continue;
                 }
+                if (registry.def(block).slab) {
+                    const float bottom = static_cast<float>(y);
+                    const float top = bottom + 0.5f;
+                    if (box.max.y <= bottom + 0.001f || box.min.y >= top - 0.001f) {
+                        continue;
+                    }
+                }
+                return true;
             }
         }
     }
@@ -208,19 +217,35 @@ void Player::update(const World& world, const BlockRegistry& registry, const Pla
         velocity.y = 0.0f;
     }
 
-    const float deltaX = velocity.x * dt;
-    position.x += deltaX;
-    if (collides(world, registry, position)) {
-        position.x -= deltaX;
-        velocity.x = 0.0f;
-    }
+    auto moveAxis = [&](float delta, float& coordinate, float& axisVelocity) {
+        if (delta == 0.0f) {
+            return;
+        }
+        coordinate += delta;
+        if (!collides(world, registry, position)) {
+            return;
+        }
 
-    const float deltaZ = velocity.z * dt;
-    position.z += deltaZ;
-    if (collides(world, registry, position)) {
-        position.z -= deltaZ;
-        velocity.z = 0.0f;
-    }
+        const float originalY = position.y;
+        bool stepped = false;
+        if (!inWater && !flying && onGround) {
+            for (float lift = 0.1f; lift <= 0.6f + 1e-3f; lift += 0.1f) {
+                position.y = originalY + lift;
+                if (!collides(world, registry, position)) {
+                    stepped = true;
+                    break;
+                }
+            }
+        }
+        if (!stepped) {
+            position.y = originalY;
+            coordinate -= delta;
+            axisVelocity = 0.0f;
+        }
+    };
+
+    moveAxis(velocity.x * dt, position.x, velocity.x);
+    moveAxis(velocity.z * dt, position.z, velocity.z);
 
 }
 
