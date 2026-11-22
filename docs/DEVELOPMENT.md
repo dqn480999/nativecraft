@@ -25,7 +25,10 @@ src/game/Game.*               event loop, input, HUD, screenshots, sound trigger
 src/game/Player.*             camera, movement, collision, raycast
 src/world/World.*             chunk storage and world generation
 src/world/Blocks.*            block registry, model resolution, texture layers, display names
-src/render/WorldRenderer.*    chunk meshes, shaders, transparent pass
+src/render/Environment.*      sun direction, sky colors, ambient light, day factor
+src/render/SkyRenderer.*      sky gradient, sun, moon, stars, moving clouds
+src/render/ReflectionTarget.* offscreen color and depth target for water reflections
+src/render/WorldRenderer.*    chunk meshes, shadow map, world shader, water shader
 src/render/Hud.*              crosshair, hotbar, icons, bitmap text
 src/render/GL.*               OpenGL function loading
 src/render/Shader.*           shader compilation and uniforms
@@ -54,27 +57,38 @@ Block loading:
 
 Grass uses a composited side texture built from `grass_side` and a green-tinted `grass_side_overlay`. Animated textures such as water and lava use the first frame of the vertical strip.
 
-## Rendering
+## Rendering passes
 
-- One `GL_TEXTURE_2D_ARRAY` holds 16x16 block textures. Filtering is nearest, mipmaps are disabled.
-- Each chunk owns one VAO, VBO, and EBO. Opaque and transparent indices share the buffer; opaque indices are drawn first, then transparent indices.
-- Faces are culled when the neighbor is opaque. Faces between two identical non-opaque blocks are skipped.
-- Per-face shading is constant: top 1.0, bottom 0.5, north/south 0.86, east/west 0.72.
-- Transparent chunks are sorted back to front. Blending uses `GL_SRC_ALPHA` and `GL_ONE_MINUS_SRC_ALPHA` with depth writes disabled.
-- Fog is linear between 80 and 230 blocks.
+Each frame runs these passes:
+
+1. **Shadow map.** Opaque chunks are rendered from the sun direction into a 2048x2048 depth texture. The light matrix uses an orthographic projection that covers the world.
+2. **Reflection.** The scene is rendered from a camera mirrored across the water plane into an offscreen color/depth target. The sky and opaque geometry are included. Geometry below the water plane is clipped.
+3. **Sky.** A fullscreen triangle computes sky gradient, sun disk, moon, stars, and moving clouds from the inverse view-projection matrix.
+4. **Opaque world.** Block textures are lit by sun color, ambient sky/ground, and the shadow map. Glass and ice use a separate transparent pass.
+5. **Water.** Water vertices are displaced by large waves and small ripples. The fragment shader blends deep water color with the planar reflection, applies Fresnel, sun path, specular highlights, foam, and fog.
+6. **HUD.** Crosshair, hotbar icons, bitmap text, and status lines.
+
+## Lighting model
+
+- Sun direction and color are derived from `timeOfDay` in `render/Environment.cpp`.
+- Sky zenith, horizon, fog, and ambient colors interpolate between day and night values.
+- The world shader uses `ambient = mix(ambientGround, ambientSky, normal.y * 0.5 + 0.5)` and `light = ambient + sunColor * max(dot(normal, sunDir), 0) * shadow`.
+- Shadows use a 3x3 PCF kernel with a slope-scaled bias.
+- Time advances at `--time-speed` per second and can be paused with `T`.
 
 ## World generation
 
-- Chunks are 16x128x16. The default world is 6x6 chunks.
+- Chunks are 16x128x16. The default world is 8x8 chunks (128x128x128).
 - Height uses fBm value noise with two frequency bands.
 - Sea level is 56. Columns below sea level are filled with water and topped with sand.
+- A 14-block ocean margin forces the world boundary below sea level, so the visible edge is ocean instead of a cliff.
 - Stone, dirt, grass, coal ore, iron ore, and gravel are placed by depth and hash.
 - Trees are placed deterministically from a position hash on grass above sea level.
 - The world is generated once at startup and kept in memory.
 
 ## Threading
 
-The client is single-threaded. World generation, meshing, input, and rendering all run on the main thread.
+The client is single-threaded. World generation, meshing, shadow rendering, reflection rendering, input, and the main render pass all run on the main thread.
 
 ## Build and test
 
@@ -90,7 +104,7 @@ Render smoke test:
   --screenshot shots/check.png --frames 90 --width 1280 --height 720
 ```
 
-The screenshot mode creates a real window, renders a fixed number of frames, writes a PNG, and exits.
+Screenshot mode creates a real window, renders a fixed number of frames, writes a PNG, and exits.
 
 ## Current state
 
@@ -101,8 +115,8 @@ Verified on:
 - OpenGL 3.3.0
 - 1280x720
 - About 60 FPS
-- 36 chunks
-- 83454 triangles
+- 64 chunks
+- 131040 triangles
 - 78 blocks
 - 101 textures
 - 103 texture-array layers
@@ -112,12 +126,13 @@ Verified on:
 1. Anvil and NBT support to open existing 1.12.2 saves.
 2. Full block model geometry: `elements`, `multipart`, rotations, `uvlock`, cross models, slabs, stairs, fences, panes.
 3. Inventory, item stacks, block drops, and item pickup.
-4. Skylight and blocklight propagation plus ambient occlusion.
+4. Skylight and blocklight propagation.
 5. Entities and mobs.
 6. Networking and the 1.12.2 protocol.
 7. Biomes, structures, chunk streaming, and frustum culling.
-8. Positional audio and music.
-9. Native launcher with version JSON, asset validation, and authentication.
+8. Weather, cloud shadows, volumetric light shafts, and water depth effects.
+9. Positional audio and music.
+10. Native launcher with version JSON, asset validation, and authentication.
 
 ## Conventions
 

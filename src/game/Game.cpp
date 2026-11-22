@@ -71,7 +71,19 @@ bool Game::init(const GameOptions& options, std::string* error) {
     if (!worldRenderer_.init(textures_, error)) {
         return false;
     }
+    if (!sky_.init(error)) {
+        return false;
+    }
     if (!hud_.init(assets_, textures_, error)) {
+        return false;
+    }
+
+    timeOfDay_ = options_.timeOfDay;
+    timeSpeed_ = options_.timeSpeed;
+    waterLevel_ = static_cast<float>(World::kSeaLevel);
+    environment_ = computeEnvironment(timeOfDay_);
+    if (!reflection_.resize(std::max(1, options_.width), std::max(1, options_.height),
+                            error)) {
         return false;
     }
 
@@ -80,7 +92,7 @@ bool Game::init(const GameOptions& options, std::string* error) {
         logWarn("audio disabled: %s", audioError.c_str());
     }
 
-    world_ = std::make_unique<World>(6, 6, options_.seed);
+    world_ = std::make_unique<World>(8, 8, options_.seed);
     world_->generate(blocks_);
     player_.spawn(*world_, blocks_);
     player_.yaw = 35.0f;
@@ -194,6 +206,10 @@ void Game::processEvents(bool& running) {
                 mouseCaptured_ = !mouseCaptured_;
                 SDL_SetRelativeMouseMode(mouseCaptured_ ? SDL_TRUE : SDL_FALSE);
                 break;
+            case SDLK_t:
+                timePaused_ = !timePaused_;
+                logInfo("time %s", timePaused_ ? "paused" : "running");
+                break;
             case SDLK_F2: {
                 screenshotRequested_ = true;
                 screenshotRequestPath_ =
@@ -256,6 +272,13 @@ void Game::update(float deltaTime) {
         fpsFrames_ = 0;
     }
 
+    elapsedTime_ += deltaTime;
+    if (!timePaused_) {
+        timeOfDay_ += deltaTime * timeSpeed_;
+        timeOfDay_ -= std::floor(timeOfDay_);
+    }
+    environment_ = computeEnvironment(timeOfDay_);
+
     if (screenshotMode_) {
         return;
     }
@@ -302,8 +325,47 @@ void Game::render() {
         return;
     }
 
+    const int reflectionWidth = std::max(1, width);
+    const int reflectionHeight = std::max(1, height);
+    std::string reflectionError;
+    if (!reflection_.resize(reflectionWidth, reflectionHeight, &reflectionError)) {
+        static bool logged = false;
+        if (!logged) {
+            logError("reflection disabled: %s", reflectionError.c_str());
+            logged = true;
+        }
+    }
+
+    worldRenderer_.renderShadowMap(*world_, blocks_, environment_.sunDirection);
+
+    const Vec3 eye = player_.eye();
+    const Vec3 reflectedEye{eye.x, 2.0f * waterLevel_ - eye.y, eye.z};
+    const Vec3 forward = player_.forward();
+    const Vec3 reflectedForward{forward.x, -forward.y, forward.z};
+    const Vec3 up = std::abs(reflectedForward.y) > 0.99f ? Vec3{0.0f, 0.0f, 1.0f}
+                                                         : Vec3{0.0f, 1.0f, 0.0f};
+    const Mat4 reflectionView = Mat4::lookAt(reflectedEye, reflectedEye + reflectedForward, up);
+    const float reflectionAspect =
+        static_cast<float>(reflectionWidth) / static_cast<float>(reflectionHeight);
+    const Mat4 reflectionProjection =
+        Mat4::perspective(radians(70.0f), reflectionAspect, 0.1f, 300.0f);
+    const Mat4 reflectionViewProjection = reflectionProjection * reflectionView;
+
+    if (reflection_.valid()) {
+        reflection_.bind();
+        glClearColor(environment_.fogColor.x, environment_.fogColor.y, environment_.fogColor.z,
+                     1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        sky_.render(reflectionViewProjection.inverse(), reflectedEye, environment_,
+                    elapsedTime_);
+        worldRenderer_.drawOpaque(reflectionViewProjection, reflectedEye, environment_, 80.0f,
+                                  230.0f, true, waterLevel_, true);
+        reflection_.unbind();
+    }
+
     glViewport(0, 0, width, height);
-    glClearColor(skyColor_.x, skyColor_.y, skyColor_.z, 1.0f);
+    glClearColor(environment_.fogColor.x, environment_.fogColor.y, environment_.fogColor.z,
+                 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
@@ -311,7 +373,13 @@ void Game::render() {
     const Mat4 view = player_.viewMatrix();
     const Mat4 viewProjection = projection * view;
 
-    worldRenderer_.draw(viewProjection, player_.eye(), skyColor_, 80.0f, 230.0f);
+    sky_.render(viewProjection.inverse(), eye, environment_, elapsedTime_);
+    worldRenderer_.drawOpaque(viewProjection, eye, environment_, 80.0f, 230.0f, false, 0.0f,
+                              false);
+    worldRenderer_.drawTransparent(viewProjection, eye, environment_, 80.0f, 230.0f);
+    worldRenderer_.drawWater(viewProjection, eye, environment_, 80.0f, 230.0f,
+                             reflection_.colorTexture(), reflectionViewProjection,
+                             elapsedTime_, waterLevel_);
     drawHud();
 }
 
@@ -348,6 +416,11 @@ void Game::drawHud() {
                   selectedBlockName().c_str(), looking.c_str(),
                   worldRenderer_.triangleCount());
     shadowText(12.0f, 52.0f, line, 1.5f, {0.94f, 0.94f, 0.94f});
+
+    std::snprintf(line, sizeof(line), "Time %.2f    Sun %.2f    %s", static_cast<double>(timeOfDay_),
+                  static_cast<double>(environment_.sunDirection.y),
+                  timePaused_ ? "PAUSED" : "RUNNING");
+    shadowText(12.0f, 72.0f, line, 1.4f, {0.86f, 0.92f, 1.0f});
 
     const int slots = static_cast<int>(hotbar_.size());
     if (slots > 0) {
@@ -548,6 +621,8 @@ void Game::shutdown() {
     }
     audio_.shutdown();
     hud_.destroy();
+    sky_.destroy();
+    reflection_.destroy();
     worldRenderer_.destroy();
     textures_.destroy();
     world_.reset();

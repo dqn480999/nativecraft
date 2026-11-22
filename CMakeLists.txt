@@ -27,6 +27,9 @@ add_executable(nativecraft
     src/render/GL.cpp
     src/render/Shader.cpp
     src/render/TextureArray.cpp
+    src/render/Environment.cpp
+    src/render/SkyRenderer.cpp
+    src/render/ReflectionTarget.cpp
     src/render/WorldRenderer.cpp
     src/render/Hud.cpp
     src/world/Blocks.cpp

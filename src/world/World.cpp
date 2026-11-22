@@ -144,7 +144,7 @@ void World::generate(const BlockRegistry& registry) {
     const int leaves = registry.id("oak_leaves");
     const int gravel = registry.id("gravel");
 
-    constexpr int seaLevel = 56;
+    constexpr int seaLevel = kSeaLevel;
     const int width = this->width();
     const int depth = this->depth();
 
@@ -155,6 +155,12 @@ void World::generate(const BlockRegistry& registry) {
             const float detail = fbm(static_cast<float>(x) * 0.06f, static_cast<float>(z) * 0.06f,
                                      seed_ ^ 0xA5A5A5A5ull, 3);
             int height = 44 + static_cast<int>(base * 24.0f) + static_cast<int>(detail * 7.0f);
+            const int margin = std::min(std::min(x, width - 1 - x), std::min(z, depth - 1 - z));
+            if (margin < 14) {
+                const float blend = 1.0f - static_cast<float>(margin) / 14.0f;
+                height = static_cast<int>(lerpf(static_cast<float>(height),
+                                                static_cast<float>(seaLevel - 9), blend));
+            }
             height = std::clamp(height, 8, kHeight - 12);
 
             const bool beach = height <= seaLevel + 1;

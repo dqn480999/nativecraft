@@ -169,6 +169,57 @@ struct Mat4 {
         return out;
     }
 
+    Mat4 inverse() const {
+        float aug[4][8] = {};
+        for (int row = 0; row < 4; ++row) {
+            for (int col = 0; col < 4; ++col) {
+                aug[row][col] = m[col * 4 + row];
+            }
+            aug[row][4 + row] = 1.0f;
+        }
+
+        for (int col = 0; col < 4; ++col) {
+            int pivot = col;
+            for (int row = col + 1; row < 4; ++row) {
+                if (std::abs(aug[row][col]) > std::abs(aug[pivot][col])) {
+                    pivot = row;
+                }
+            }
+            if (std::abs(aug[pivot][col]) < 1e-8f) {
+                return identity();
+            }
+            if (pivot != col) {
+                for (int k = 0; k < 8; ++k) {
+                    std::swap(aug[col][k], aug[pivot][k]);
+                }
+            }
+            const float scale = 1.0f / aug[col][col];
+            for (int k = 0; k < 8; ++k) {
+                aug[col][k] *= scale;
+            }
+            for (int row = 0; row < 4; ++row) {
+                if (row == col) {
+                    continue;
+                }
+                const float factor = aug[row][col];
+                if (factor == 0.0f) {
+                    continue;
+                }
+                for (int k = 0; k < 8; ++k) {
+                    aug[row][k] -= factor * aug[col][k];
+                }
+            }
+        }
+
+        Mat4 out;
+        for (int row = 0; row < 4; ++row) {
+            for (int col = 0; col < 4; ++col) {
+                out.m[col * 4 + row] = aug[row][4 + col];
+            }
+        }
+        return out;
+    }
+
     const float* data() const { return m.data(); }
 };
 

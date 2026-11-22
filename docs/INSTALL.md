@@ -76,6 +76,8 @@ Optional arguments:
 --width N                 window width, default 1280
 --height N                window height, default 720
 --seed N                  world seed, default 12345
+--time T                  time of day in [0,1], default 0.32
+--time-speed S            time advance per second, default 0.0025
 --camera X Y Z YAW PITCH  override the camera
 --screenshot PATH         render a PNG and exit
 --frames N                frames to render before the screenshot
@@ -116,6 +118,10 @@ OpenAL must find a working audio device. The client continues without audio if O
 ### Textures are missing or show a checkerboard
 
 Check that `assets/indexes/1.12.json` and `assets/objects/` are present and complete. Re-download the assets with the official launcher if needed.
+
+### Performance
+
+Shadow mapping uses a 2048x2048 depth map. Water reflections render the scene a second time at the window resolution. Integrated GPUs may need a smaller window size.
 
 ### Wayland
 

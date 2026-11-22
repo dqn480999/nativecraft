@@ -38,6 +38,11 @@ extern PFNGLUNIFORM3FPROC Uniform3f;
 extern PFNGLACTIVETEXTUREPROC ActiveTexture;
 extern PFNGLTEXIMAGE3DPROC TexImage3D;
 extern PFNGLTEXSUBIMAGE3DPROC TexSubImage3D;
+extern PFNGLGENFRAMEBUFFERSPROC GenFramebuffers;
+extern PFNGLBINDFRAMEBUFFERPROC BindFramebuffer;
+extern PFNGLFRAMEBUFFERTEXTURE2DPROC FramebufferTexture2D;
+extern PFNGLCHECKFRAMEBUFFERSTATUSPROC CheckFramebufferStatus;
+extern PFNGLDELETEFRAMEBUFFERSPROC DeleteFramebuffers;
 
 bool loadFunctions(std::string* error = nullptr);
 

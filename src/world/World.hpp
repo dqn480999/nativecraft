@@ -12,6 +12,7 @@ class World {
 public:
     static constexpr int kChunkSize = 16;
     static constexpr int kHeight = 128;
+    static constexpr int kSeaLevel = 56;
     static constexpr int kChunkVolume = kChunkSize * kChunkSize * kHeight;
 
     World(int chunksX, int chunksZ, std::uint64_t seed);

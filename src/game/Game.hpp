@@ -10,7 +10,10 @@
 #include "assets/Assets.hpp"
 #include "audio/Audio.hpp"
 #include "game/Player.hpp"
+#include "render/Environment.hpp"
 #include "render/Hud.hpp"
+#include "render/ReflectionTarget.hpp"
+#include "render/SkyRenderer.hpp"
 #include "render/TextureArray.hpp"
 #include "render/WorldRenderer.hpp"
 #include "world/Blocks.hpp"
@@ -25,6 +28,8 @@ struct GameOptions {
     std::uint64_t seed = 12345;
     std::string screenshotPath;
     int screenshotFrames = 0;
+    float timeOfDay = 0.32f;
+    float timeSpeed = 0.0025f;
     bool hasCamera = false;
     Vec3 cameraPosition{};
     float cameraYaw = 0.0f;
@@ -58,9 +63,18 @@ private:
     TextureArray textures_;
     std::unique_ptr<World> world_;
     WorldRenderer worldRenderer_;
+    SkyRenderer sky_;
+    ReflectionTarget reflection_;
     Hud hud_;
     Audio audio_;
     Player player_;
+    Environment environment_;
+
+    float timeOfDay_ = 0.32f;
+    float timeSpeed_ = 0.0025f;
+    float elapsedTime_ = 0.0f;
+    float waterLevel_ = 56.0f;
+    bool timePaused_ = false;
 
     std::vector<int> hotbar_;
     int selectedSlot_ = 0;
@@ -79,7 +93,6 @@ private:
     double fpsAccumulator_ = 0.0;
     int fpsFrames_ = 0;
 
-    Vec3 skyColor_{0.52f, 0.72f, 0.96f};
 };
 
 }

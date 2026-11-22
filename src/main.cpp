@@ -19,6 +19,8 @@ void printUsage() {
                  "  --seed N           world seed (default 12345)\n"
                  "  --screenshot PATH  render to PATH and exit\n"
                  "  --frames N         frames before screenshot (default 90)\n"
+                 "  --time T           time of day in [0,1] (default 0.32)\n"
+                 "  --time-speed S     time advance per second (default 0.0025)\n"
                  "  --camera X Y Z YAW PITCH  override camera (debug/screenshots)\n"
                  "  --help             show this help\n");
 }
@@ -119,6 +121,18 @@ int main(int argc, char** argv) {
             const char* value = requireValue("--frames");
             if (!value || !parseInt(value, options.screenshotFrames, 1, 100000)) {
                 nc::logError("invalid --frames");
+                return 1;
+            }
+        } else if (std::strcmp(argument, "--time") == 0) {
+            const char* value = requireValue("--time");
+            if (!value || !parseFloat(value, options.timeOfDay)) {
+                nc::logError("invalid --time");
+                return 1;
+            }
+        } else if (std::strcmp(argument, "--time-speed") == 0) {
+            const char* value = requireValue("--time-speed");
+            if (!value || !parseFloat(value, options.timeSpeed)) {
+                nc::logError("invalid --time-speed");
                 return 1;
             }
         } else if (std::strcmp(argument, "--camera") == 0) {

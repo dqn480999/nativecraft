@@ -34,6 +34,11 @@ PFNGLUNIFORM3FPROC Uniform3f = nullptr;
 PFNGLACTIVETEXTUREPROC ActiveTexture = nullptr;
 PFNGLTEXIMAGE3DPROC TexImage3D = nullptr;
 PFNGLTEXSUBIMAGE3DPROC TexSubImage3D = nullptr;
+PFNGLGENFRAMEBUFFERSPROC GenFramebuffers = nullptr;
+PFNGLBINDFRAMEBUFFERPROC BindFramebuffer = nullptr;
+PFNGLFRAMEBUFFERTEXTURE2DPROC FramebufferTexture2D = nullptr;
+PFNGLCHECKFRAMEBUFFERSTATUSPROC CheckFramebufferStatus = nullptr;
+PFNGLDELETEFRAMEBUFFERSPROC DeleteFramebuffers = nullptr;
 
 bool loadFunctions(std::string* error) {
     std::vector<std::string> missing;
@@ -76,6 +81,11 @@ bool loadFunctions(std::string* error) {
     NC_LOAD(ActiveTexture);
     NC_LOAD(TexImage3D);
     NC_LOAD(TexSubImage3D);
+    NC_LOAD(GenFramebuffers);
+    NC_LOAD(BindFramebuffer);
+    NC_LOAD(FramebufferTexture2D);
+    NC_LOAD(CheckFramebufferStatus);
+    NC_LOAD(DeleteFramebuffers);
 
 #undef NC_LOAD
 
