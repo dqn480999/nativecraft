@@ -84,7 +84,7 @@ The grass block uses a composited side texture built from `grass_side` and a gre
 
 Each frame runs these passes:
 
-1. **Shadow maps.** Two cascades are rendered from the sun direction. The far cascade is 4096x4096 and covers a 130-block radius around the player with opaque geometry only. The near cascade is 4096x4096, covers 22 blocks, and includes grass blades so grass casts sharp shadows. Each cascade has its own normal offset and bias. Both are cached and re-rendered only when the sun, focus, or near-cascade wind animation changes. Sampling uses hardware PCF; the 18-22 block transition takes the darker of the two cascades to avoid sunlight leaks.
+1. **Shadow maps.** Two cascades are rendered from the sun direction. The far cascade is 4096x4096 and covers a 130-block radius around the player with opaque geometry only. The near cascade is 4096x4096, covers 22 blocks, and includes grass blades so grass casts shadows. Each cascade has its own normal offset and bias. Both are cached and re-rendered only when the sun, focus, or near-cascade wind animation changes. Sampling uses a 16-tap rotated Poisson-disk PCF kernel for soft edges; the 18-22 block transition takes the darker of the two cascades to avoid sunlight leaks.
 2. **Reflection.** The scene is rendered from a camera mirrored across the water plane into an offscreen color/depth target. The sky and opaque geometry are included. Geometry below the water plane is clipped.
 3. **Sky.** A fullscreen triangle computes sky gradient, sun, moon, stars, and moving clouds from the inverse view-projection matrix.
 4. **Opaque world.** Block textures are lit by sun color, ambient sky/ground, and the shadow map.
@@ -100,7 +100,7 @@ All world passes use frustum culling against cached chunk bounds.
 - Sun direction and color are derived from `timeOfDay` in `render/Environment.cpp`.
 - Sky zenith, horizon, fog, and ambient colors interpolate between day and night values.
 - The world shader uses `ambient = mix(ambientGround, ambientSky, normal.y * 0.5 + 0.5)` and `light = ambient + sunColor * max(dot(normal, sunDir), 0) * shadow`.
-- Shadows use a 3x3 hardware PCF kernel with a slope-scaled bias and normal offset.
+- Shadows use a 16-tap rotated Poisson-disk PCF kernel with a slope-scaled bias and normal offset.
 - The near shadow cascade refreshes at 10 Hz so wind-driven grass shadows animate.
 - Time advances at `--time-speed` per second and can be paused with `T`.
 - Wind direction and strength are computed in `Game::update` and passed to the grass shader.
