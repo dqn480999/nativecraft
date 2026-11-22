@@ -20,6 +20,10 @@ Textures, block models, blockstates, the bitmap font, language files, and sounds
 
 ![Sun](docs/screenshots/sun.png)
 
+![Glowstone dynamic light](docs/screenshots/glowstone.png)
+
+![Flashlight](docs/screenshots/flashlight.png)
+
 ![Night](docs/screenshots/night.png)
 
 ![Snow-capped mountains](docs/screenshots/mountains.png)
@@ -74,6 +78,7 @@ Useful options:
 --time T                time of day in [0,1]
 --time-speed S          day cycle speed
 --third-person          start in third-person view
+--flashlight            start with flashlight enabled
 --camera X Y Z YAW PITCH
 --screenshot PATH
 --raytrace PATH         software ray tracing test render, 1280x720
@@ -92,6 +97,7 @@ Useful options:
 | F | Toggle flight |
 | E | Open or close inventory |
 | F5 | Toggle first/third person view |
+| L | Toggle flashlight |
 | M | Toggle mouse capture |
 | T | Pause or resume the day cycle |
 | 1-9, mouse wheel | Select hotbar slot |
@@ -117,6 +123,8 @@ Useful options:
 - Water simulation: exposed underwater air refills and connected air pockets below sea level flood.
 - Bottom slabs for stone, cobblestone, oak, sandstone, and bricks with partial collision and step-up.
 - Background music, looping water ambience when swimming, synthetic bird chirps, and low-altitude mist.
+- Dynamic point lights from placed glowstone and lava; glowstone/lava surfaces are emissive.
+- Handheld flashlight spotlight with warm color, inner/outer cone falloff, range attenuation, and an HUD indicator. Starts with `--flashlight` or toggles with L.
 - Third-person Steve player model with skin, walk, idle, jump, swim, and attack animations. The model casts shadows in both shadow cascades.
 - Inventory with 27 storage slots and a 9-slot hotbar, item counts, block icons, click-to-move, and hotbar selection.
 - Frustum culling for shadow, reflection, opaque, grass, transparent, and water passes.
@@ -134,6 +142,7 @@ Useful options:
 
 - No item entities, crafting, mobs, or networking.
 - Inventory is creative-style: placing blocks does not consume stacks, and broken blocks are not picked up.
+- Point lights are limited to 16 nearest sources and do not cast shadows.
 - Only cube and bottom-slab block models are supported.
 - Animated textures use the first frame.
 - No weather, volumetric lighting, or cloud shadows.

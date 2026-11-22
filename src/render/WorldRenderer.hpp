@@ -16,6 +16,12 @@
 
 namespace nc {
 
+struct PointLight {
+    Vec3 position{};
+    Vec3 color{1.0f, 0.75f, 0.4f};
+    float range = 14.0f;
+};
+
 class WorldRenderer {
 public:
     bool init(TextureArray& textures, std::string* error = nullptr);
@@ -36,6 +42,8 @@ public:
                          const Vec3& playerPosition);
     void setWaterState(float waterLevel, float time, bool underwater);
     void setPlayerRenderer(PlayerRenderer* renderer, const PlayerRenderState& state);
+    void setDynamicLights(const std::vector<PointLight>& lights);
+    void setFlashlight(bool enabled, const Vec3& position, const Vec3& direction);
 
     void drawOpaque(const Mat4& viewProjection, const Vec3& cameraPosition,
                     const Environment& environment, float fogStart, float fogEnd,
@@ -74,6 +82,7 @@ private:
         float g;
         float b;
         float a;
+        float emission;
     };
 
     struct ChunkMesh {
@@ -98,6 +107,7 @@ private:
                           const Environment& environment, float fogStart, float fogEnd,
                           bool useClip, float clipY);
     void destroyMesh(ChunkMesh& mesh);
+    void setDynamicLightUniforms(Shader& shader) const;
     void renderShadowTarget(GLuint framebuffer, int size, const Mat4& lightViewProjection,
                             bool includeGrass, float time, const Vec3& windDirection,
                             float windStrength, const Vec3& playerPosition);
@@ -115,6 +125,10 @@ private:
     bool underwater_ = false;
     PlayerRenderer* playerRenderer_ = nullptr;
     PlayerRenderState playerState_{};
+    std::vector<PointLight> pointLights_;
+    bool flashlightEnabled_ = false;
+    Vec3 flashlightPosition_{};
+    Vec3 flashlightDirection_{};
 
     GLuint shadowFbo_ = 0;
     GLuint shadowTexture_ = 0;

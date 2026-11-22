@@ -256,6 +256,13 @@ void World::unload(const ChunkPos& pos) {
         saveChunk(pos, it->second);
     }
     chunks_.erase(it);
+    for (auto light = lightSources_.begin(); light != lightSources_.end();) {
+        if (chunkOf(light->x, light->z) == pos) {
+            light = lightSources_.erase(light);
+        } else {
+            ++light;
+        }
+    }
 }
 
 void World::saveAll() {
@@ -533,6 +540,22 @@ void World::pumpCompleted() {
         chunk.blocks = data.blocks;
         chunk.generated = true;
         chunk.modified = false;
+        if (!emissiveIds_.empty()) {
+            for (int ly = 0; ly < kHeight; ++ly) {
+                for (int lz = 0; lz < kChunkSize; ++lz) {
+                    for (int lx = 0; lx < kChunkSize; ++lx) {
+                        const int blockId = chunk.blocks[static_cast<std::size_t>(
+                            localIndex(lx, ly, lz))];
+                        if (std::find(emissiveIds_.begin(), emissiveIds_.end(), blockId)
+                            != emissiveIds_.end()) {
+                            lightSources_.insert(
+                                BlockPos{data.pos.x * kChunkSize + lx, ly,
+                                         data.pos.z * kChunkSize + lz});
+                        }
+                    }
+                }
+            }
+        }
         if (data.loadedFromDisk) {
             logInfo("loaded chunk %d,%d from disk", data.pos.x, data.pos.z);
         }
@@ -543,6 +566,29 @@ void World::pumpCompleted() {
     if (completed > 0) {
         logInfo("streaming: +%d chunks, loaded=%zu, pending=%zu", completed, chunks_.size(),
                 pending_.size());
+    }
+}
+
+void World::setEmissiveBlocks(const std::vector<int>& blockIds) {
+    emissiveIds_ = blockIds;
+    lightSources_.clear();
+    for (const auto& [pos, chunk] : chunks_) {
+        if (!chunk.generated) {
+            continue;
+        }
+        for (int ly = 0; ly < kHeight; ++ly) {
+            for (int lz = 0; lz < kChunkSize; ++lz) {
+                for (int lx = 0; lx < kChunkSize; ++lx) {
+                    const int blockId = chunk.blocks[static_cast<std::size_t>(
+                        localIndex(lx, ly, lz))];
+                    if (std::find(emissiveIds_.begin(), emissiveIds_.end(), blockId)
+                        != emissiveIds_.end()) {
+                        lightSources_.insert(
+                            BlockPos{pos.x * kChunkSize + lx, ly, pos.z * kChunkSize + lz});
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -571,9 +617,21 @@ void World::set(int x, int y, int z, std::uint8_t block) {
     if (!chunk || !chunk->generated) {
         return;
     }
-    chunk->blocks[static_cast<std::size_t>(localIndex(localCoord(x), y, localCoord(z)))] =
-        block;
+    const std::size_t local =
+        static_cast<std::size_t>(localIndex(localCoord(x), y, localCoord(z)));
+    const int previous = chunk->blocks[local];
+    chunk->blocks[local] = block;
     chunk->modified = true;
+
+    const bool wasEmissive =
+        std::find(emissiveIds_.begin(), emissiveIds_.end(), previous) != emissiveIds_.end();
+    const bool isEmissive =
+        std::find(emissiveIds_.begin(), emissiveIds_.end(), block) != emissiveIds_.end();
+    if (wasEmissive && !isEmissive) {
+        lightSources_.erase(BlockPos{x, y, z});
+    } else if (!wasEmissive && isEmissive) {
+        lightSources_.insert(BlockPos{x, y, z});
+    }
     if (block == 0 && y < kSeaLevel) {
         scheduleFluid(x, y, z);
     }

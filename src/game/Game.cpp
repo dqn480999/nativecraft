@@ -204,6 +204,7 @@ bool Game::init(const GameOptions& options, std::string* error) {
     }
 
     thirdPerson_ = options_.thirdPerson;
+    flashlightOn_ = options_.flashlight;
     timeOfDay_ = options_.timeOfDay;
     timeSpeed_ = options_.timeSpeed;
     waterLevel_ = static_cast<float>(World::kSeaLevel);
@@ -222,6 +223,18 @@ bool Game::init(const GameOptions& options, std::string* error) {
 
     const std::string saveDirectory = "saves/" + std::to_string(options_.seed);
     world_ = std::make_unique<World>(options_.seed, saveDirectory, options_.workerThreads);
+    {
+        std::vector<int> emissiveBlocks;
+        const int glowstone = blocks_.id("glowstone");
+        const int lava = blocks_.id("lava");
+        if (glowstone > 0) {
+            emissiveBlocks.push_back(glowstone);
+        }
+        if (lava > 0) {
+            emissiveBlocks.push_back(lava);
+        }
+        world_->setEmissiveBlocks(emissiveBlocks);
+    }
 
     const auto waitForStreaming = [this](int timeoutMs) {
         const auto deadline = std::chrono::steady_clock::now()
@@ -403,6 +416,10 @@ void Game::processEvents(bool& running) {
                 break;
             case SDLK_F5:
                 thirdPerson_ = !thirdPerson_;
+                break;
+            case SDLK_l:
+                flashlightOn_ = !flashlightOn_;
+                logInfo("flashlight %s", flashlightOn_ ? "enabled" : "disabled");
                 break;
             case SDLK_t:
                 timePaused_ = !timePaused_;
@@ -642,6 +659,41 @@ void Game::render() {
             fogEnd = 42.0f;
         }
     }
+    std::vector<PointLight> pointLights;
+    for (const BlockPos& position : world_->lightSources()) {
+        const int blockId = world_->get(position.x, position.y, position.z);
+        const BlockDef& block = blocks_.def(blockId);
+        if (block.lightEmission <= 0.0f) {
+            continue;
+        }
+        const float dx = static_cast<float>(position.x) + 0.5f - player_.position.x;
+        const float dy = static_cast<float>(position.y) + 0.5f - player_.position.y;
+        const float dz = static_cast<float>(position.z) + 0.5f - player_.position.z;
+        const float distanceSquared = dx * dx + dy * dy + dz * dz;
+        if (distanceSquared > 80.0f * 80.0f) {
+            continue;
+        }
+        Vec3 color{1.5f, 1.05f, 0.50f};
+        float range = 18.0f;
+        if (block.name == "lava") {
+            color = {1.4f, 0.45f, 0.10f};
+            range = 13.0f;
+        }
+        pointLights.push_back(PointLight{{static_cast<float>(position.x) + 0.5f,
+                                         static_cast<float>(position.y) + 0.5f,
+                                         static_cast<float>(position.z) + 0.5f},
+                                        color, range});
+    }
+    std::sort(pointLights.begin(), pointLights.end(),
+              [this](const PointLight& a, const PointLight& b) {
+                  return lengthSquared(a.position - player_.position)
+                       < lengthSquared(b.position - player_.position);
+              });
+    if (pointLights.size() > 16) {
+        pointLights.resize(16);
+    }
+    worldRenderer_.setDynamicLights(pointLights);
+    worldRenderer_.setFlashlight(flashlightOn_, player_.eye(), player_.forward());
     worldRenderer_.setWaterState(waterLevel_, elapsedTime_, underwater_);
     const PlayerRenderState playerState = buildPlayerRenderState();
     worldRenderer_.setPlayerRenderer(&playerRenderer_, playerState);
@@ -762,11 +814,12 @@ void Game::drawHud() {
                   worldRenderer_.triangleCount());
     shadowText(12.0f, 52.0f, line, 1.5f, {0.94f, 0.94f, 0.94f});
 
-    std::snprintf(line, sizeof(line), "Time %.2f  Sun %.2f  Wind %.2f  %s",
+    std::snprintf(line, sizeof(line), "Time %.2f  Sun %.2f  Wind %.2f  %s  %s",
                   static_cast<double>(timeOfDay_),
                   static_cast<double>(environment_.sunDirection.y),
                   static_cast<double>(windStrength_),
-                  timePaused_ ? "PAUSED" : "RUNNING");
+                  timePaused_ ? "PAUSED" : "RUNNING",
+                  flashlightOn_ ? "FLASHLIGHT" : "");
     shadowText(12.0f, 72.0f, line, 1.4f, {0.86f, 0.92f, 1.0f});
 
     const int slots = static_cast<int>(hotbar_.size());

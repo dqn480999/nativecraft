@@ -42,6 +42,7 @@ struct GameOptions {
     int grassDistance = 3;
     int workerThreads = 0;
     bool thirdPerson = false;
+    bool flashlight = false;
     bool hasCamera = false;
     Vec3 cameraPosition{};
     float cameraYaw = 0.0f;
@@ -102,6 +103,7 @@ private:
     bool underwater_ = false;
     bool underwaterLava_ = false;
     bool thirdPerson_ = false;
+    bool flashlightOn_ = false;
     float walkPhase_ = 0.0f;
     float walkAmount_ = 0.0f;
     float attackSwing_ = 0.0f;

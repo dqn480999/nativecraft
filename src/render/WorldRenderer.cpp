@@ -107,6 +107,7 @@ layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
 layout(location = 3) in float aLayer;
 layout(location = 4) in vec4 aColor;
+layout(location = 5) in float aEmission;
 
 uniform mat4 uViewProj;
 uniform mat4 uLightVPNear;
@@ -118,6 +119,7 @@ out vec3 vWorldPos;
 out vec3 vNormal;
 out vec3 vUV;
 out vec4 vColor;
+out float vEmission;
 out vec4 vShadowCoordNear;
 out vec4 vShadowCoordFar;
 
@@ -128,6 +130,7 @@ void main() {
     vNormal = aNormal;
     vUV = vec3(aUV, aLayer);
     vColor = aColor;
+    vEmission = aEmission;
     vShadowCoordNear = uLightVPNear
                      * vec4(aPos + aNormal * uShadowNormalOffsetNear, 1.0);
     vShadowCoordFar = uLightVPFar
@@ -141,6 +144,7 @@ in vec3 vWorldPos;
 in vec3 vNormal;
 in vec3 vUV;
 in vec4 vColor;
+in float vEmission;
 in vec4 vShadowCoordNear;
 in vec4 vShadowCoordFar;
 
@@ -162,6 +166,20 @@ uniform float uShadowStrength;
 uniform float uTime;
 uniform float uWaterLevel;
 uniform float uCausticStrength;
+
+#define MAX_POINT_LIGHTS 16
+uniform int uPointLightCount;
+uniform vec3 uPointLightPositions[16];
+uniform vec3 uPointLightColors[16];
+uniform float uPointLightRanges[16];
+
+uniform int uFlashlightOn;
+uniform vec3 uFlashlightPos;
+uniform vec3 uFlashlightDir;
+uniform vec3 uFlashlightColor;
+uniform float uFlashlightRange;
+uniform float uFlashlightInner;
+uniform float uFlashlightOuter;
 
 out vec4 FragColor;
 
@@ -256,7 +274,30 @@ void main() {
     shadow = mix(1.0, shadow, uShadowStrength);
     vec3 ambient = mix(uAmbientGround, uAmbientSky, normal.y * 0.5 + 0.5);
     vec3 light = ambient + uSunColor * sun * shadow;
+
+    for (int i = 0; i < uPointLightCount; ++i) {
+        vec3 delta = uPointLightPositions[i] - vWorldPos;
+        float distance = length(delta);
+        if (distance < uPointLightRanges[i]) {
+            vec3 direction = delta / max(distance, 0.001);
+            float attenuation = 1.0 - smoothstep(0.0, uPointLightRanges[i], distance);
+            light += uPointLightColors[i] * attenuation
+                   * (0.25 + 0.75 * max(dot(normal, direction), 0.0));
+        }
+    }
+
+    if (uFlashlightOn != 0) {
+        vec3 delta = uFlashlightPos - vWorldPos;
+        float distance = length(delta);
+        vec3 direction = delta / max(distance, 0.001);
+        float spot = smoothstep(uFlashlightOuter, uFlashlightInner,
+                                dot(-direction, uFlashlightDir));
+        float attenuation = 1.0 - smoothstep(0.0, uFlashlightRange, distance);
+        light += uFlashlightColor * max(dot(normal, direction), 0.0) * spot * attenuation;
+    }
+
     vec3 color = texel.rgb * vColor.rgb * light;
+    color += texel.rgb * vEmission * 1.5;
 
     if (vWorldPos.y < uWaterLevel - 0.05) {
         float caustic = causticPattern(vWorldPos.xz, uTime) * uCausticStrength;
@@ -296,6 +337,7 @@ layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
 layout(location = 3) in float aLayer;
 layout(location = 4) in vec4 aColor;
+layout(location = 5) in float aEmission;
 
 uniform mat4 uViewProj;
 uniform mat4 uLightVP;
@@ -360,6 +402,20 @@ uniform float uFogEnd;
 uniform float uShadowStrength;
 uniform float uTime;
 
+#define MAX_POINT_LIGHTS 16
+uniform int uPointLightCount;
+uniform vec3 uPointLightPositions[16];
+uniform vec3 uPointLightColors[16];
+uniform float uPointLightRanges[16];
+
+uniform int uFlashlightOn;
+uniform vec3 uFlashlightPos;
+uniform vec3 uFlashlightDir;
+uniform vec3 uFlashlightColor;
+uniform float uFlashlightRange;
+uniform float uFlashlightInner;
+uniform float uFlashlightOuter;
+
 const vec2 kPoissonDisk[16] = vec2[](
     vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
     vec2(-0.09418410, -0.92938870), vec2(0.34495938, 0.29387760),
@@ -405,6 +461,28 @@ void main() {
     float shadow = mix(1.0, shadowFactor(vShadowCoord, normal), uShadowStrength);
     vec3 ambient = mix(uAmbientGround, uAmbientSky, normal.y * 0.5 + 0.5);
     vec3 light = ambient * 0.85 + uSunColor * sun * shadow * 0.8;
+
+    for (int i = 0; i < uPointLightCount; ++i) {
+        vec3 delta = uPointLightPositions[i] - vWorldPos;
+        float distance = length(delta);
+        if (distance < uPointLightRanges[i]) {
+            vec3 direction = delta / max(distance, 0.001);
+            float attenuation = 1.0 - smoothstep(0.0, uPointLightRanges[i], distance);
+            light += uPointLightColors[i] * attenuation
+                   * (0.25 + 0.75 * max(dot(normal, direction), 0.0));
+        }
+    }
+
+    if (uFlashlightOn != 0) {
+        vec3 delta = uFlashlightPos - vWorldPos;
+        float distance = length(delta);
+        vec3 direction = delta / max(distance, 0.001);
+        float spot = smoothstep(uFlashlightOuter, uFlashlightInner,
+                                dot(-direction, uFlashlightDir));
+        float attenuation = 1.0 - smoothstep(0.0, uFlashlightRange, distance);
+        light += uFlashlightColor * max(dot(normal, direction), 0.0) * spot * attenuation;
+    }
+
     float blade = clamp(1.0 - vUV.y, 0.0, 1.0);
     vec3 color = vColor.rgb * light * mix(0.42, 1.05, blade);
 
@@ -429,6 +507,7 @@ layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
 layout(location = 3) in float aLayer;
 layout(location = 4) in vec4 aColor;
+layout(location = 5) in float aEmission;
 
 uniform mat4 uViewProj;
 uniform float uTime;
@@ -694,6 +773,9 @@ void WorldRenderer::uploadMesh(ChunkMesh& mesh, const std::vector<Vertex>& verti
     gl::EnableVertexAttribArray(4);
     gl::VertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex),
                             reinterpret_cast<void*>(offsetof(Vertex, r)));
+    gl::EnableVertexAttribArray(5);
+    gl::VertexAttribPointer(5, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                            reinterpret_cast<void*>(offsetof(Vertex, emission)));
 
     gl::BindVertexArray(0);
     gl::BindBuffer(GL_ARRAY_BUFFER, 0);
@@ -806,6 +888,7 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
                             out.g = tintGreen * shade;
                             out.b = tintBlue * shade;
                             out.a = 1.0f;
+                            out.emission = block.lightEmission;
                             vertices.push_back(out);
                         }
 
@@ -862,6 +945,7 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
                             out.g = green;
                             out.b = blue;
                             out.a = block.alpha;
+                            out.emission = block.lightEmission;
                             vertices.push_back(out);
                         }
                         opaqueIndices.push_back(base + 0);
@@ -920,6 +1004,7 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
                         out.g = green;
                         out.b = blue;
                         out.a = block.alpha;
+                        out.emission = block.lightEmission;
                         vertices.push_back(out);
                     }
 
@@ -1217,6 +1302,35 @@ void WorldRenderer::setPlayerRenderer(PlayerRenderer* renderer, const PlayerRend
     playerState_ = state;
 }
 
+void WorldRenderer::setDynamicLights(const std::vector<PointLight>& lights) {
+    pointLights_ = lights;
+}
+
+void WorldRenderer::setFlashlight(bool enabled, const Vec3& position, const Vec3& direction) {
+    flashlightEnabled_ = enabled;
+    flashlightPosition_ = position;
+    flashlightDirection_ = direction;
+}
+
+void WorldRenderer::setDynamicLightUniforms(Shader& shader) const {
+    const int count = std::min(static_cast<int>(pointLights_.size()), 16);
+    shader.setInt("uPointLightCount", count);
+    for (int i = 0; i < count; ++i) {
+        const PointLight& light = pointLights_[static_cast<std::size_t>(i)];
+        const std::string index = std::to_string(i);
+        shader.setVec3(("uPointLightPositions[" + index + "]").c_str(), light.position);
+        shader.setVec3(("uPointLightColors[" + index + "]").c_str(), light.color);
+        shader.setFloat(("uPointLightRanges[" + index + "]").c_str(), light.range);
+    }
+    shader.setInt("uFlashlightOn", flashlightEnabled_ ? 1 : 0);
+    shader.setVec3("uFlashlightPos", flashlightPosition_);
+    shader.setVec3("uFlashlightDir", normalize(flashlightDirection_));
+    shader.setVec3("uFlashlightColor", {1.0f, 0.95f, 0.8f});
+    shader.setFloat("uFlashlightRange", 45.0f);
+    shader.setFloat("uFlashlightInner", 0.985f);
+    shader.setFloat("uFlashlightOuter", 0.90f);
+}
+
 void WorldRenderer::setWorldUniforms(const Mat4& viewProjection, const Vec3& cameraPosition,
                                      const Environment& environment, float fogStart,
                                      float fogEnd, bool useClip, float clipY) {
@@ -1243,6 +1357,7 @@ void WorldRenderer::setWorldUniforms(const Mat4& viewProjection, const Vec3& cam
     shader_.setInt("uShadowMapNear", 2);
     shader_.setInt("uShadowMapFar", 1);
     shader_.setFloat("uNearShadowDistance", 22.0f);
+    setDynamicLightUniforms(shader_);
 }
 
 void WorldRenderer::drawOpaque(const Mat4& viewProjection, const Vec3& cameraPosition,
@@ -1312,6 +1427,7 @@ void WorldRenderer::drawGrass(const Mat4& viewProjection, const Vec3& cameraPosi
     grassShader_.setVec3("uPlayerPos", playerPosition);
     grassShader_.setFloat("uPlayerRadius", 1.7f);
     grassShader_.setInt("uShadowMap", 1);
+    setDynamicLightUniforms(grassShader_);
 
     gl::ActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, shadowTexture_);

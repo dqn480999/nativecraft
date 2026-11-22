@@ -26,6 +26,7 @@ void printUsage() {
                  "  --grass-distance N   grass mesh radius (default 3)\n"
                  "  --threads N          chunk generation threads (default: auto)\n"
                  "  --third-person       start in third-person view\n"
+                 "  --flashlight         start with flashlight enabled\n"
                  "  --camera X Y Z YAW PITCH  override camera (debug/screenshots)\n"
                  "  --help             show this help\n");
 }
@@ -166,6 +167,8 @@ int main(int argc, char** argv) {
             }
         } else if (std::strcmp(argument, "--third-person") == 0) {
             options.thirdPerson = true;
+        } else if (std::strcmp(argument, "--flashlight") == 0) {
+            options.flashlight = true;
         } else if (std::strcmp(argument, "--camera") == 0) {
             float values[5] = {};
             for (float& target : values) {

@@ -135,6 +135,15 @@ All world passes use frustum culling against cached chunk bounds.
 - Left-click picks up, swaps, or places a stack; right-clicking a hotbar slot selects it.
 - The UI uses the same block icons and bitmap font as the HUD.
 
+## Dynamic lighting
+
+- Glowstone and lava blocks carry a per-vertex emission attribute; the world shader adds their texture color as emission.
+- The world tracks emissive block positions in the chunk map, including restored chunks from disk.
+- Up to 16 nearest point lights are uploaded to the world and grass shaders as position, color, and range arrays.
+- Point lights use smooth range attenuation and a small ambient-facing term so the surrounding blocks visibly glow.
+- The flashlight is a camera-aligned spotlight with range attenuation and smooth inner/outer cone falloff. `L` or `--flashlight` toggles it.
+- Point lights are analytic; they do not cast shadow maps.
+
 ## Ambient audio
 
 - Background music loops `music/game/calm1.ogg` at low gain.

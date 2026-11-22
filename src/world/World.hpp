@@ -60,6 +60,10 @@ public:
     bool isStreamingIdle() const { return pending_.empty(); }
     void scheduleFluid(int x, int y, int z);
     std::vector<ChunkPos> updateFluids(const BlockRegistry& registry, int budget);
+    void setEmissiveBlocks(const std::vector<int>& blockIds);
+    const std::unordered_set<BlockPos, BlockPosHash>& lightSources() const {
+        return lightSources_;
+    }
 
     std::uint8_t get(int x, int y, int z) const;
     void set(int x, int y, int z, std::uint8_t block);
@@ -113,6 +117,8 @@ private:
     std::unordered_set<ChunkPos, ChunkPosHash> pending_;
     std::deque<BlockPos> fluidQueue_;
     std::unordered_set<BlockPos, BlockPosHash> fluidQueued_;
+    std::vector<int> emissiveIds_;
+    std::unordered_set<BlockPos, BlockPosHash> lightSources_;
     std::vector<PendingJob> pendingJobs_;
     ChunkPos streamCenter_{};
     int streamRadius_ = 6;

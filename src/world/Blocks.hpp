@@ -39,6 +39,7 @@ struct BlockDef {
     bool liquid = false;
     bool cross = false;
     bool slab = false;
+    float lightEmission = 0.0f;
     int grassBladeMin = 9;
     int grassBladeMax = 13;
     float grassHeightMin = 0.32f;

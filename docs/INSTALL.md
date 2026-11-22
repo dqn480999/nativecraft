@@ -85,6 +85,7 @@ Optional arguments:
 --screenshot PATH         render a PNG and exit
 --raytrace PATH           software ray tracing test render, 1280x720
 --third-person            start in third-person view
+--flashlight              start with flashlight enabled
 --frames N                frames to render before the screenshot
 --help                    show usage
 ```

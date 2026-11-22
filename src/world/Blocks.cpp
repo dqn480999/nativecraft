@@ -363,6 +363,9 @@ bool BlockRegistry::addFromModel(const std::string& name, Assets& assets,
     BlockDef def;
     def.name = name;
     def.displayName = lookupDisplayName(name);
+    if (name == "glowstone") {
+        def.lightEmission = 1.4f;
+    }
 
     if (!loaded) {
         logWarn("model for block '%s' not found (model '%s'), using fallback", name.c_str(),
@@ -504,6 +507,7 @@ bool BlockRegistry::addWaterOrLava(const std::string& name, Assets& assets,
     def.liquid = true;
     def.transparentPass = water;
     def.alpha = water ? 0.72f : 1.0f;
+    def.lightEmission = water ? 0.0f : 1.2f;
     if (water) {
         for (auto& tint : def.tints) {
             tint = {0.16f, 0.34f, 0.38f};
