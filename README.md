@@ -28,6 +28,8 @@ Textures, block models, blockstates, the bitmap font, language files, and sounds
 
 ![Survival](docs/screenshots/survival.png)
 
+![Cave darkness](docs/screenshots/cave.png)
+
 ![Night](docs/screenshots/night.png)
 
 ![Snow-capped mountains](docs/screenshots/mountains.png)
@@ -130,7 +132,7 @@ Useful options:
 - Bottom slabs for stone, cobblestone, oak, sandstone, and bricks with partial collision and step-up.
 - Background music, looping water ambience when swimming, synthetic bird chirps, and low-altitude mist.
 - Dynamic point lights from placed glowstone and lava; glowstone/lava surfaces are emissive.
-- Skylight-based ambient: caves, tunnels and covered areas are genuinely dark; use glowstone or the flashlight.
+- Skylight-based ambient with a 3x3 nearest-opening search and smooth falloff: caves and covered areas are dark, while trees and terrain sides are no longer black. Use glowstone or the flashlight in the dark.
 - TNT with fuse, crater destruction, chain reactions, knockback and damage, smoke, fire, debris particles, explosion flash, screen flash and sound.
 - Survival: health, hunger, oxygen, fall damage, lava damage, drowning, death and respawn.
 - Inventory collection and placement consumption; 9 recipes in a crafting panel (logs to planks, slabs, sandstone, TNT, and more).

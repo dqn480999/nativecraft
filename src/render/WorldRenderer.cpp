@@ -278,7 +278,8 @@ void main() {
     shadow = mix(1.0, shadow, uShadowStrength);
     float skyFactor = mix(0.10, 1.0, vSkyLight);
     vec3 ambient = mix(uAmbientGround, uAmbientSky, normal.y * 0.5 + 0.5) * skyFactor;
-    vec3 light = ambient + uSunColor * sun * shadow * vSkyLight;
+    vec3 light = ambient
+               + uSunColor * sun * shadow * smoothstep(0.20, 0.65, vSkyLight);
 
     for (int i = 0; i < uPointLightCount; ++i) {
         vec3 delta = uPointLightPositions[i] - vWorldPos;
@@ -470,7 +471,8 @@ void main() {
     float shadow = mix(1.0, shadowFactor(vShadowCoord, normal), uShadowStrength);
     float skyFactor = mix(0.10, 1.0, vSkyLight);
     vec3 ambient = mix(uAmbientGround, uAmbientSky, normal.y * 0.5 + 0.5) * skyFactor;
-    vec3 light = ambient * 0.85 + uSunColor * sun * shadow * 0.8 * vSkyLight;
+    vec3 light = ambient * 0.85
+               + uSunColor * sun * shadow * 0.8 * smoothstep(0.20, 0.65, vSkyLight);
 
     for (int i = 0; i < uPointLightCount; ++i) {
         vec3 delta = uPointLightPositions[i] - vWorldPos;
@@ -822,19 +824,25 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
     const int baseX = chunkX * World::kChunkSize;
     const int baseZ = chunkZ * World::kChunkSize;
 
-    std::array<int, World::kChunkSize * World::kChunkSize> columnTop{};
+    constexpr int kColumnMargin = 1;
+    constexpr int kColumnSize = World::kChunkSize + kColumnMargin * 2;
+    std::array<int, kColumnSize * kColumnSize> columnTop{};
     columnTop.fill(-1);
-    for (int localZ = 0; localZ < World::kChunkSize; ++localZ) {
-        for (int localX = 0; localX < World::kChunkSize; ++localX) {
+    for (int localZ = -kColumnMargin; localZ < World::kChunkSize + kColumnMargin; ++localZ) {
+        for (int localX = -kColumnMargin; localX < World::kChunkSize + kColumnMargin; ++localX) {
             const int worldX = baseX + localX;
             const int worldZ = baseZ + localZ;
+            int top = -1;
             for (int y = World::kHeight - 1; y >= 0; --y) {
                 const int block = world.get(worldX, y, worldZ);
                 if (block != 0 && registry.isOpaque(block)) {
-                    columnTop[static_cast<std::size_t>(localZ * World::kChunkSize + localX)] = y;
+                    top = y;
                     break;
                 }
             }
+            const int cx = localX + kColumnMargin;
+            const int cz = localZ + kColumnMargin;
+            columnTop[static_cast<std::size_t>(cz * kColumnSize + cx)] = top;
         }
     }
 
@@ -849,9 +857,19 @@ void WorldRenderer::rebuildChunk(const World& world, const BlockRegistry& regist
                 }
 
                 const BlockDef& block = registry.def(blockId);
-                const int top = columnTop[static_cast<std::size_t>(
-                    z * World::kChunkSize + x)];
-                const float skyLight = (y >= top) ? 1.0f : 0.0f;
+                int nearestTop = World::kHeight;
+                for (int dz = -1; dz <= 1; ++dz) {
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        const int cx = x + kColumnMargin + dx;
+                        const int cz = z + kColumnMargin + dz;
+                        nearestTop = std::min(
+                            nearestTop,
+                            columnTop[static_cast<std::size_t>(cz * kColumnSize + cx)]);
+                    }
+                }
+                const float skyLight = clampf(
+                    1.0f - static_cast<float>(std::max(0, nearestTop - y)) * 0.07f, 0.22f,
+                    1.0f);
                 if (block.cross) {
                     if (!includeGrass) {
                         continue;

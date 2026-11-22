@@ -137,9 +137,10 @@ All world passes use frustum culling against cached chunk bounds.
 
 ## Skylight
 
-- Each chunk mesh computes the topmost opaque block for every column.
-- Vertices above that height receive full skylight; vertices below receive 10% ambient and no direct sun.
-- Tall grass and other non-opaque vegetation no longer block skylight; leaves do not block ambient but still cast sun shadows.
+- Each chunk mesh computes the topmost opaque block for a 3x3 neighborhood of columns.
+- A vertex's skylight uses the nearest opening in that neighborhood and falls off smoothly with depth below it, with a dark floor for deep caves.
+- Direct sun is faded out smoothly when skylight is low, so caves receive point/flashlight illumination instead of sunlight.
+- Tall grass and other non-opaque vegetation do not block skylight; leaves do not block ambient but still cast sun shadows.
 - This makes dug tunnels and caves dark until lit by glowstone, lava, or the flashlight.
 
 ## TNT and particles
